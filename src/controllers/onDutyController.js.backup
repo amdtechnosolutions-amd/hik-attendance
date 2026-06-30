@@ -1,0 +1,176 @@
+import mongoose from 'mongoose';
+import ExcelJS from 'exceljs';
+import fs from 'fs';
+import moment from 'moment';
+import xlsx from "xlsx";
+/**
+ * Upload On Duty records from Excel file
+ * @param {Object} req - Express request object with file
+ * @param {Object} res - Express response object
+ * @returns {Object} - JSON response with upload results
+ */
+// export const uploadOnDutyExcel = async (req, res) => {
+//   try {
+//     const { institutionId } = req.params;
+//     const { models, connection } = req.institutionDb;
+//     const User = models.User;
+//     const OnDuty = models.OnDuty;
+
+//     if (!req.file) {
+//       return res.status(400).json({ success: false, message: "No file provided" });
+//     }
+
+//     const filePath = req.file.path;
+
+//     const workbook = new ExcelJS.Workbook();
+//     await workbook.xlsx.readFile(filePath);
+
+//     const worksheet = workbook.worksheets[0];
+
+//     // Define required columns
+//     const requiredHeaders = ['EmployeeNo', 'StartDate', 'EndDate', 'Description'];
+//     const headers = worksheet.getRow(1).values;
+
+//     // Validate headers
+//     const missingHeaders = requiredHeaders.filter(h => !headers.includes(h));
+//     if (missingHeaders.length > 0) {
+//       fs.unlinkSync(filePath);
+//       return res.status(400).json({ 
+//         success: false, 
+//         message: `Missing required columns: ${missingHeaders.join(', ')}` 
+//       });
+//     }
+
+//     // Get column indices
+//     const employeeNoIdx = headers.indexOf('EmployeeNo') + 1;
+//     const startDateIdx = headers.indexOf('StartDate') + 1;
+//     const endDateIdx = headers.indexOf('EndDate') + 1;
+//     const descriptionIdx = headers.indexOf('Description') + 1;
+
+//     const results = {
+//       success: 0,
+//       failed: 0,
+//       errors: []
+//     };
+
+//     // Process each row
+//     const bulkCreates = [];
+//     worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+//       if (rowNumber === 1) return; // skip header row
+
+//       try {
+//         const employeeNo = row.getCell(employeeNoIdx).text?.trim();
+//         const startDateStr = row.getCell(startDateIdx).text?.trim();
+//         const endDateStr = row.getCell(endDateIdx).text?.trim();
+//         const description = row.getCell(descriptionIdx).text?.trim();
+
+//         // Validate required fields
+//         if (!employeeNo) {
+//           results.failed++;
+//           results.errors.push(`Row ${rowNumber}: Missing Employee No`);
+//           return;
+//         }
+
+//         if (!startDateStr || !endDateStr || !description) {
+//           results.failed++;
+//           results.errors.push(`Row ${rowNumber}: Missing Start Date, End Date, or Description for ${employeeNo}`);
+//           return;
+//         }
+
+//         // Parse dates
+//         const startDate = moment(startDateStr, ['YYYY-MM-DD', 'DD-MM-YYYY', 'MM/DD/YYYY']).toDate();
+//         const endDate = moment(endDateStr, ['YYYY-MM-DD', 'DD-MM-YYYY', 'MM/DD/YYYY']).toDate();
+
+//         if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+//           results.failed++;
+//           results.errors.push(`Row ${rowNumber}: Invalid date format for ${employeeNo}. Use YYYY-MM-DD`);
+//           return;
+//         }
+
+//         if (startDate > endDate) {
+//           results.failed++;
+//           results.errors.push(`Row ${rowNumber}: Start date must be before end date for ${employeeNo}`);
+//           return;
+//         }
+
+//         // Find user by employeeNo
+//         const userPromise = User.findOne({ employeeNo })
+//           .then(user => {
+//             if (!user) {
+//               results.failed++;
+//               results.errors.push(`Row ${rowNumber}: User not found for Employee No: ${employeeNo}`);
+//               return null;
+//             }
+
+//             // Create OnDuty record
+//             return OnDuty.create({
+//               institutionId,
+//               userId: user._id,
+//               employeeNo: user.employeeNo,
+//               startDate,
+//               endDate,
+//               description
+//             }).then(() => {
+//               results.success++;
+//             }).catch(err => {
+//               results.failed++;
+//               results.errors.push(`Row ${rowNumber}: Failed to create OD record for ${employeeNo} - ${err.message}`);
+//             });
+//           })
+//           .catch(err => {
+//             results.failed++;
+//             results.errors.push(`Row ${rowNumber}: Error finding user ${employeeNo} - ${err.message}`);
+//           });
+
+//         bulkCreates.push(userPromise);
+//       } catch (err) {
+//         results.failed++;
+//         results.errors.push(`Row ${rowNumber}: ${err.message}`);
+//       }
+//     });
+
+//     // Wait for all operations to complete
+//     await Promise.all(bulkCreates);
+
+//     // Clean up uploaded file
+//     fs.unlinkSync(filePath);
+
+//     res.status(200).json({ 
+//       success: true, 
+//       message: `Upload completed. ${results.success} records created, ${results.failed} failed`,
+//       summary: results
+//     });
+//   } catch (error) {
+//     console.error('Error in uploadOnDutyExcel:', error);
+//     if (req.file) {
+//       fs.unlinkSync(req.file.path);
+//     }
+//     res.status(500).json({ 
+// Delete matching records
+const result = await OnDuty.deleteMany(query);
+
+return res.status(200).json({
+  success: true,
+  message: `Successfully deleted ${result.deletedCount} On Duty records`,
+  deletedCount: result.deletedCount
+});
+    } catch (error) {
+  console.error("Error deleting On Duty records:", error);
+  return res.status(500).json({
+    success: false,
+    message: "Failed to delete On Duty records",
+    error: error.message
+  });
+}
+  };
+
+export default {
+  createOnDuty,
+  getUserOnDuty,
+  getInstitutionOnDuty,
+  updateOnDuty,
+  deleteOnDuty,
+  uploadOnDutyExcel,
+  downloadOnDutyTemplate,
+  deleteOnDutyByDates
+};

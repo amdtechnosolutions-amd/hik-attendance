@@ -1,0 +1,462 @@
+{
+  "info": {
+    "name": "CompOff Management API",
+    "description": "Complete CompOff Management API - Create, Get, Adjust, Mark as Used, Cancel, Delete, and Reports",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "CompOff Assignment",
+      "item": [
+        {
+          "name": "Assign CompOff to Faculties",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"employeeNumbers\": [\"EMP001\", \"EMP002\"],\n  \"holidayDate\": \"2025-12-10\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/compoff/assign-faculties",
+              "host": ["{{baseUrl}}"],
+              "path": ["institutions", "{{institutionId}}", "compoff", "assign-faculties"]
+            },
+            "description": "Assign CompOff to multiple faculties for a specific holiday date they worked"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Faculty CompOff Assignments",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/compoff/faculty-assignments?employeeNumber=EMP001&status=available",
+              "host": ["{{baseUrl}}"],
+              "path": ["institutions", "{{institutionId}}", "compoff", "faculty-assignments"],
+              "query": [
+                {
+                  "key": "employeeNumber",
+                  "value": "EMP001",
+                  "disabled": false
+                },
+                {
+                  "key": "status",
+                  "value": "available",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Get CompOff assignments for faculties with optional filters (employeeNumber, status)"
+          },
+          "response": []
+        },
+        {
+          "name": "Adjust CompOff Assignment",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"usedDate\": \"2025-12-20\",\n  \"status\": \"used\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/compoff/{{compOffId}}/adjust",
+              "host": ["{{baseUrl}}"],
+              "path": ["institutions", "{{institutionId}}", "compoff", "{{compOffId}}", "adjust"]
+            },
+            "description": "Adjust CompOff assignment - mark as used when faculty takes leave"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "CompOff Management",
+      "item": [
+        {
+          "name": "Create CompOff (Manual)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"holidayDate\": \"2025-12-25\",\n  \"reason\": \"Worked on festival day\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/compoff/manual",
+              "host": ["{{baseUrl}}"],
+              "path": ["institutions", "{{institutionId}}", "compoff", "manual"]
+            },
+            "description": "Create a new CompOff record manually (admin entry)"
+          },
+          "response": []
+        },
+        {
+          "name": "Create CompOff (Automatic)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"holidayDate\": \"2025-12-25\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/compoff/automatic",
+              "host": ["{{baseUrl}}"],
+              "path": ["institutions", "{{institutionId}}", "compoff", "automatic"]
+            },
+            "description": "Create a CompOff record automatically when staff works on holiday"
+          },
+          "response": []
+        },
+        {
+          "name": "Get All CompOff Records",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/compoff?status=available&userId={{userId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["institutions", "{{institutionId}}", "compoff"],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "available",
+                  "disabled": false
+                },
+                {
+                  "key": "userId",
+                  "value": "{{userId}}",
+                  "disabled": true
+                },
+                {
+                  "key": "startDate",
+                  "value": "2025-01-01",
+                  "disabled": true
+                },
+                {
+                  "key": "endDate",
+                  "value": "2025-12-31",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Get all CompOff records with optional filters (status, userId, startDate, endDate)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get CompOff Balance for User",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/compoff/balance/{{userId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["institutions", "{{institutionId}}", "compoff", "balance", "{{userId}}"]
+            },
+            "description": "Get CompOff balance summary for a specific user (earned, available, used, cancelled)"
+          },
+          "response": []
+        },
+        {
+          "name": "Mark CompOff as Used",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"usedDate\": \"2025-12-20\",\n  \"notes\": \"Personal leave\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/compoff/{{compOffId}}/use",
+              "host": ["{{baseUrl}}"],
+              "path": ["institutions", "{{institutionId}}", "compoff", "{{compOffId}}", "use"]
+            },
+            "description": "Mark a CompOff as used and link to attendance record"
+          },
+          "response": []
+        },
+        {
+          "name": "Cancel CompOff",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Cancelled as per policy\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/compoff/{{compOffId}}/cancel",
+              "host": ["{{baseUrl}}"],
+              "path": ["institutions", "{{institutionId}}", "compoff", "{{compOffId}}", "cancel"]
+            },
+            "description": "Cancel a CompOff record"
+          },
+          "response": []
+        },
+        {
+          "name": "Delete CompOff",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/compoff/{{compOffId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["institutions", "{{institutionId}}", "compoff", "{{compOffId}}"]
+            },
+            "description": "Delete a CompOff record permanently"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "CompOff Excel Operations",
+      "item": [
+        {
+          "name": "Download CompOff Template",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/compoff/template/download",
+              "host": ["{{baseUrl}}"],
+              "path": ["institutions", "{{institutionId}}", "compoff", "template", "download"]
+            },
+            "description": "Download CompOff Excel template (EmployeeNo, HolidayDate, Reason)"
+          },
+          "response": []
+        },
+        {
+          "name": "Upload CompOff Excel",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "value": "{{compOffFile}}",
+                  "type": "file"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/compoff/upload",
+              "host": ["{{baseUrl}}"],
+              "path": ["institutions", "{{institutionId}}", "compoff", "upload"]
+            },
+            "description": "Upload CompOff records from Excel file (bulk create)"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "CompOff Reports",
+      "item": [
+        {
+          "name": "Get Monthly CompOff Report",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/users/{{userId}}/compoff-report?month=12&year=2025",
+              "host": ["{{baseUrl}}"],
+              "path": ["institutions", "{{institutionId}}", "users", "{{userId}}", "compoff-report"],
+              "query": [
+                {
+                  "key": "month",
+                  "value": "12",
+                  "disabled": false
+                },
+                {
+                  "key": "year",
+                  "value": "2025",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Get monthly CompOff report for a specific user"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Institution CompOff Summary",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/compoff-summary?month=12&year=2025",
+              "host": ["{{baseUrl}}"],
+              "path": ["institutions", "{{institutionId}}", "compoff-summary"],
+              "query": [
+                {
+                  "key": "month",
+                  "value": "12",
+                  "disabled": false
+                },
+                {
+                  "key": "year",
+                  "value": "2025",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Get CompOff summary for entire institution (all users)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get User CompOff History",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/users/{{userId}}/compoff-history",
+              "host": ["{{baseUrl}}"],
+              "path": ["institutions", "{{institutionId}}", "users", "{{userId}}", "compoff-history"]
+            },
+            "description": "Get complete CompOff history for a specific user (all transactions)"
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000/api",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "your_jwt_token_here",
+      "type": "string"
+    },
+    {
+      "key": "institutionId",
+      "value": "68e0e148f633a16a99a9df2e",
+      "type": "string"
+    },
+    {
+      "key": "userId",
+      "value": "user_id_here",
+      "type": "string"
+    },
+    {
+      "key": "compOffId",
+      "value": "compoff_id_here",
+      "type": "string"
+    },
+    {
+      "key": "compOffFile",
+      "value": "/path/to/compoff.xlsx",
+      "type": "string"
+    }
+  ]
+}

@@ -1,0 +1,3546 @@
+import User from '../models/User.js';
+import Device from '../models/Device.js';
+import {
+  addPersonToDevice,
+  fetchAllFaces,
+  downloadFaceImage
+} from '../services/hikvisionService.js';
+import { formatISAPITime } from '../utils/timeUtil.js';
+import { fetchUsersFromDevice } from '../services/deviceService.js';
+import mongoose from 'mongoose';
+import path from 'path';
+import fs from 'fs';
+import ExcelJS from 'exceljs';
+import Institution from '../models/Institution.js';
+import moment from "moment-timezone";
+import PDFDocument from "pdfkit";
+import Attendance from '../models/Attendance.js';
+import Teacher from "../models/Teacher.js";
+import OnDuty from '../models/OnDuty.js';
+import { promisify } from 'util';
+import { pipeline } from 'stream';
+import { calculateAttendanceStatus, createAttendanceExcel, createAttendancePDF } from '../services/reportService.js';
+const streamPipeline = promisify(pipeline);
+
+
+
+///  ========================================================== Seniority Update ==========================================================
+export const updateSeniority = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { seniorityNo } = req.body;
+    const { connection, models } = req.institutionDb;
+
+    const User = models.User;  // Use institution scoped model
+
+    console.log("Connected DB:", connection.name);
+    console.log("Updating user:", userId, "to seniorityNo:", seniorityNo);
+
+    // Check if the seniority number is already taken
+    const existing = await User.findOne({ seniorityNo });
+    if (existing) {
+      return res.status(400).json({ message: "Seniority number already assigned" });
+    }
+
+    // Update the user
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      { seniorityNo },
+      { new: true }
+    );
+
+    console.log(updatedUser);
+
+    if (!updatedUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    console.log("Updated user:", updatedUser);
+    res.status(200).json(updatedUser);
+  } catch (err) {
+    console.error("Error in updateSeniority:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+export const uploadSeniorityExcel = async (req, res) => {
+  try {
+    const { models } = req.institutionDb;
+    const User = models.User;
+    const filePath = req.file.path;
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(filePath);
+
+    const worksheet = workbook.worksheets[0]; // assuming data in first sheet
+
+    // Define expected header columns, e.g., EmployeeNo, SeniorityNo, UserType
+    const requiredHeaders = ['EmployeeNo', 'SeniorityNo', 'UserType'];
+    const headers = worksheet.getRow(1).values;
+
+    // Validate headers exist
+    const missingHeaders = requiredHeaders.filter(h => !headers.includes(h));
+    if (missingHeaders.length > 0) {
+      fs.unlinkSync(filePath);
+      return res.status(400).json({ message: `Missing required columns: ${missingHeaders.join(', ')}` });
+    }
+
+    // Iterate rows from 2 onwards
+    const bulkUpdates = [];
+    worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+      if (rowNumber === 1) return; // skip header row
+      const employeeNo = row.getCell(headers.indexOf('EmployeeNo')).text.trim();
+      const seniorityNo = parseInt(row.getCell(headers.indexOf('SeniorityNo')).text.trim(), 10);
+      const userType = row.getCell(headers.indexOf('UserType')).text.trim();
+
+      if (!employeeNo) return; // skip empty employeeNo rows
+
+      // Prepare update promise
+      const p = User.findOneAndUpdate(
+        { employeeNo },
+        { seniorityNo, userType },
+        { new: true }
+      ).exec();
+
+      bulkUpdates.push(p);
+    });
+
+    await Promise.all(bulkUpdates);
+
+    fs.unlinkSync(filePath); // delete uploaded file
+
+    res.json({ success: true, message: 'Seniority and user types updated successfully' });
+  } catch (error) {
+    console.error('Error in uploadSeniorityExcel:', error);
+    res.status(500).json({ message: 'Failed to process uploaded Excel file' });
+  }
+};
+[]
+export const getAllTeachers = async (req, res) => {
+  try {
+    const { models } = req.institutionDb;
+    // Use institution-specific Teacher model
+    const Teacher = models.Teacher || req.institutionDb.connection.model('Teacher');
+
+    console.log("Getting teachers from institution-specific database");
+
+    const teachers = await Teacher.find()
+      .populate("userId") // get name from user
+      .sort({ seniorityNo: 1 }); // show in seniority order
+
+    console.log(`Found ${teachers.length} teachers`);
+    res.json(teachers);
+  } catch (err) {
+    console.error("Error getting teachers:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+///  ========================================================== end Seniority Update ==========================================================
+
+async function generateAttendancePDFMultiPage(users, institution, now, logoPath, pdfFilePath) {
+  return new Promise((resolve, reject) => {
+    try {
+      const doc = new PDFDocument({ margin: 10, size: "A4", layout: "landscape" });
+      const stream = fs.createWriteStream(pdfFilePath);
+      doc.pipe(stream);
+
+      // Place Logo
+      let yPos = 30;
+      if (fs.existsSync(logoPath)) {
+        const logoWidth = 50;
+        const logoHeight = 50;
+        doc.image(logoPath, (doc.page.width - logoWidth) / 2, yPos, { width: logoWidth, height: logoHeight });
+        yPos += logoHeight + 30; // Add vertical space below logo
+      } else {
+        yPos += 30;
+      }
+
+      // Institution Name & Report Title below logo with vertical spacing
+      doc.fontSize(14).font("Helvetica-Bold").text(institution.name, { align: "center", baseline: 'middle', y: yPos });
+      yPos += 80;
+      doc.fontSize(10).font("Helvetica").text(`Attendance Report for ${now.toLocaleString("default", { month: "long" })} ${now.getFullYear()}`, { align: "center", y: yPos });
+      yPos += 50; // Leave space before table header
+
+      const leftMargin = 30;
+      const bottomMargin = 50;
+      const rowHeight = 20;
+      const colEmployeeNoWidth = 80;
+      const colNameWidth = 140;
+      const colDateWidth = 40;
+      const headerColor = "#8B4513";
+      const headerTextColor = "#FFFFFF";
+      const oddRowColor = "#F8F8F8";
+
+      const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+
+      // Calculate max date-cols per page (each day has 2 columns)
+      const pageWidth = doc.page.width - leftMargin * 2;
+      const fixedColsWidth = colEmployeeNoWidth + colNameWidth;
+      // const maxDateColsPerPage = Math.floor((pageWidth - fixedColsWidth) / (colDateWidth * 2));
+      const maxDateColsPerPage = 5;
+      const dateChunks = [];
+      for (let i = 1; i <= daysInMonth; i += maxDateColsPerPage) {
+        dateChunks.push({ start: i, end: Math.min(i + maxDateColsPerPage - 1, daysInMonth) });
+      }
+
+      // Format users' attendance for quick date lookup
+      const usersFormatted = users.map(user => {
+        const attMap = {};
+        user.attendance.forEach(att => {
+          attMap[moment(att.date).date()] = {
+            in: att.usedCompOff ? "CompOff" : (att.firstCheckIn ? moment(att.firstCheckIn).tz("Asia/Kolkata").format("HH:mm") : ""),
+            out: att.usedCompOff ? "" : (att.lastCheckOut ? moment(att.lastCheckOut).tz("Asia/Kolkata").format("HH:mm") : ""),
+          };
+        });
+        return {
+          employeeNo: user.employeeNo,
+          name: user.name.toUpperCase(), // Convert name to uppercase
+          attendance: attMap,
+        };
+      });
+
+      function drawHeader(x, y, startDay, endDay) {
+        let currentX = x;
+        doc.fontSize(10).font("Helvetica-Bold");
+        doc.rect(currentX, y, colEmployeeNoWidth, rowHeight * 2)
+          .fill(headerColor).fillColor(headerTextColor);
+        doc.text("Employee No", currentX, y + 6, { width: colEmployeeNoWidth, align: "center" });
+        currentX += colEmployeeNoWidth;
+
+        doc.rect(currentX, y, colNameWidth, rowHeight * 2)
+          .fill(headerColor);
+        doc.text("Name", currentX, y + 6, { width: colNameWidth, align: "center" });
+        currentX += colNameWidth;
+
+        for (let d = startDay; d <= endDay; d++) {
+          const dateStr = moment(new Date(now.getFullYear(), now.getMonth(), d)).format("DD-MM-YYYY");
+          doc.rect(currentX, y, colDateWidth * 2, rowHeight)
+            .fill(headerColor).fillColor(headerTextColor);
+          doc.text(dateStr, currentX, y + 6, { width: colDateWidth * 2, align: "center" });
+
+          doc.rect(currentX, y + rowHeight, colDateWidth, rowHeight)
+            .fill(headerColor).fillColor(headerTextColor);
+          doc.text("In", currentX, y + rowHeight + 6, { width: colDateWidth, align: "center" });
+          currentX += colDateWidth;
+
+          doc.rect(currentX, y + rowHeight, colDateWidth, rowHeight)
+            .fill(headerColor).fillColor(headerTextColor);
+          doc.text("Out", currentX, y + rowHeight + 6, { width: colDateWidth, align: "center" });
+          currentX += colDateWidth;
+        }
+        doc.fillColor("black");
+      }
+
+      function drawRow(x, y, startDay, endDay, user, isOdd) {
+        let currentX = x;
+        const rowWidth = colEmployeeNoWidth + colNameWidth + colDateWidth * 2 * (endDay - startDay + 1);
+        if (isOdd) {
+          doc.rect(x, y, rowWidth, rowHeight)
+            .fill(oddRowColor).fillColor("black");
+        } else {
+          doc.fillColor("black");
+        }
+        doc.fontSize(10);
+        doc.text(user.employeeNo, currentX + 5, y + 6, { width: colEmployeeNoWidth - 10, align: "center" });
+        currentX += colEmployeeNoWidth;
+
+        doc.text(user.name, currentX + 5, y + 6, { width: colNameWidth - 10, align: "center" });
+        currentX += colNameWidth;
+
+        for (let d = startDay; d <= endDay; d++) {
+          const att = user.attendance[d] || { in: "", out: "" };
+          doc.text(att.in, currentX + 5, y + 6, { width: colDateWidth - 10, align: "center" });
+          currentX += colDateWidth;
+          doc.text(att.out, currentX + 5, y + 6, { width: colDateWidth - 10, align: "center" });
+          currentX += colDateWidth;
+        }
+      }
+
+      const maxRowsPerPage = Math.floor((doc.page.height - yPos - bottomMargin) / rowHeight);
+      let pageNum = 0;
+
+      for (const chunk of dateChunks) {
+        if (pageNum > 0) doc.addPage();
+
+        // Repeat logo and titles on new page
+        let currentY = 20;
+        if (fs.existsSync(logoPath)) {
+          const logoWidth = 100;
+          const logoHeight = 100;
+          doc.image(logoPath, (doc.page.width - logoWidth) / 2, currentY, { width: logoWidth, height: logoHeight });
+          currentY += logoHeight + 20;
+        } else {
+          currentY += 20;
+        }
+        doc.fontSize(14).font("Helvetica-Bold").text(institution.name, { align: "center", y: currentY });
+        currentY += 20;
+        doc.fontSize(10).font("Helvetica").text(`Attendance Report for ${now.toLocaleString("default", { month: "long" })} ${now.getFullYear()}`, { align: "center", y: currentY });
+        currentY += 30;
+
+        drawHeader(leftMargin, currentY, chunk.start, chunk.end);
+        currentY += rowHeight * 2;
+
+        let rowsOnPage = 0;
+        for (let i = 0; i < usersFormatted.length; i++) {
+          if (rowsOnPage >= maxRowsPerPage) {
+            doc.addPage();
+            currentY = 20;
+            if (fs.existsSync(logoPath)) {
+              const logoWidth = 100;
+              const logoHeight = 100;
+              doc.image(logoPath, (doc.page.width - logoWidth) / 2, currentY, { width: logoWidth, height: logoHeight });
+              currentY += logoHeight + 20;
+            } else {
+              currentY += 20;
+            }
+            doc.fontSize(14).font("Helvetica-Bold").text(institution.name, { align: "center", y: currentY });
+            currentY += 20;
+            doc.fontSize(10).font("Helvetica").text(`Attendance Report for ${now.toLocaleString("default", { month: "long" })} ${now.getFullYear()}`, { align: "center", y: currentY });
+            currentY += 30;
+
+            drawHeader(leftMargin, currentY, chunk.start, chunk.end);
+            currentY += rowHeight * 2;
+            rowsOnPage = 0;
+          }
+          drawRow(leftMargin, currentY, chunk.start, chunk.end, usersFormatted[i], rowsOnPage % 2 === 1);
+          currentY += rowHeight;
+          rowsOnPage++;
+        }
+
+        pageNum++;
+      }
+
+      // Add legend at the bottom of the last page
+      y += 30;
+      doc.fontSize(10).font("Helvetica-Bold").text("Legend:", left, y);
+      y += 20;
+
+      const legendItems = [
+        { code: "P", description: "Present" },
+        { code: "A", description: "Absent" },
+        { code: "L", description: "Leave" },
+        { code: "HD", description: "Half Day" },
+        { code: "LT", description: "Late" },
+        { code: "OD", description: "On Duty" },
+        { code: "WD", description: "Working Days" }
+      ];
+
+      const legendColWidth = 80;
+      const legendDescWidth = 200;
+
+      legendItems.forEach((item, index) => {
+        const rowY = y + (index * 20);
+
+        // Draw background for code cell
+        doc.rect(left, rowY, legendColWidth, 20).fillAndStroke("#f0f0f0", "#cccccc");
+
+        // Draw code
+        doc.fillColor("#000000").text(item.code, left + 5, rowY + 5, { width: legendColWidth - 10, align: "center" });
+
+        // Draw description
+        doc.text(item.description, left + legendColWidth + 10, rowY + 5, { width: legendDescWidth });
+      });
+
+      doc.end();
+      stream.on("finish", resolve);
+      stream.on("error", reject);
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+export async function addUser(req, res) {
+  const { institutionId } = req.params;
+  const { name, employeeNo, userType, deviceId } = req.body;
+
+  try {
+    // Use institution-specific database models
+    const { models } = req.institutionDb;
+
+    // Save user in institution-specific DB
+    const user = await models.User.create({
+      institutionId,
+      employeeNo,
+      name,
+      userType
+    });
+
+    // Prepare ISAPI payload
+    const payload = {
+      UserInfo: {
+        employeeNo: employeeNo.toString(),
+        name,
+        userType: userType || 'normal',
+        Valid: {
+          enable: true,
+          beginTime: formatISAPITime(new Date('2025-09-10T19:19:20')),
+          endTime: formatISAPITime(new Date('2027-09-09T05:30:00'))
+        },
+        doorRight: '1',
+        RightPlan: [{ doorNo: 1, planTemplateNo: '1' }],
+        PersonInfoExtends: []
+      }
+    };
+
+    // If a device is specified, add user to device
+    if (deviceId) {
+      const device = await models.Device.findById(deviceId);
+      if (!device) return res.status(404).json({ message: 'Device not found' });
+
+      const deviceRes = await addPersonToDevice(device, payload);
+      return res.json({ user, deviceRes });
+    }
+
+    res.json({ user });
+  } catch (err) {
+    console.error('Error adding user:', err);
+    res.status(500).json({ message: err.message });
+  }
+}
+export async function createDeviceUser(req, res) {
+  try {
+    const { employeeNo, name } = req.body;
+
+    // Add user to ISAPI device
+    const deviceResponse = await addUserToDevice(employeeNo, name);
+
+    // Optional: Save user info in your database
+    // const user = await User.create({ employeeNo, name });
+
+    res.json({
+      success: true,
+      message: 'User added successfully',
+      deviceResponse
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+}
+async function listUsers(req, res) {
+  const { institutionId } = req.params;
+  const page = parseInt(req.query.page, 10) || 1;
+  const limit = parseInt(req.query.limit, 10) || 10;
+  const skip = (page - 1) * limit;
+
+  const { search } = req.query;
+
+  try {
+    const { models } = req.institutionDb;
+
+    // 🔹 Build dynamic query
+    let query = { institutionId };
+
+    if (search) {
+      const regex = new RegExp(search, 'i');
+      query.$or = [
+        { name: regex },
+        { employeeNo: regex },
+        { userType: regex },
+      ];
+    }
+
+    // 🔹 Count total users matching query
+    const totalUsers = await models.User.countDocuments(query);
+
+    // 🔹 Fetch users with pagination and sort by seniority
+    const users = await models.User.find(query)
+      .sort({ seniorityNo: 1 }) // ascending order (1 = ascending, -1 = descending)
+      .skip(skip)
+      .limit(limit)
+      .select('employeeNo name userType seniorityNo faceImageUrl'); // Include faceImageUrl in the selection
+
+    const totalPages = Math.ceil(totalUsers / limit);
+
+    // Transform users to include image URLs
+    const usersWithImages = users.map(user => {
+      const userData = user.toObject();
+
+      // Ensure faceImageUrl is included in the response
+      if (!userData.faceImageUrl) {
+        userData.faceImageUrl = null; // Set to null if no image is available
+      }
+
+      return userData;
+    });
+
+    res.json({
+      status: 'success',
+      message: 'Users retrieved successfully',
+      count: users.length,
+      users: usersWithImages,
+      pagination: {
+        currentPage: page,
+        pageSize: limit,
+        totalUsers,
+        totalPages,
+      },
+    });
+  } catch (err) {
+    console.error('Error listing users:', err);
+    res.status(500).json({
+      status: 'error',
+      message: err.message || 'Internal server error',
+    });
+  }
+}
+
+/**
+ * Get users for dropdown selection with search functionality
+ * Optimized for dropdown use cases with minimal data returned
+ */
+export async function getUsersForDropdown(req, res) {
+  const { institutionId } = req.params;
+  const { search } = req.query;
+
+  try {
+    const { models } = req.institutionDb;
+
+    // Build query with search functionality
+    let query = { institutionId };
+
+    if (search) {
+      const regex = new RegExp(search, 'i');
+      query.$or = [
+        { name: regex },
+        { employeeNo: regex },
+      ];
+    }
+
+    // Fetch users with minimal fields needed for dropdown
+    // No pagination - return all matching results for dropdown
+    // Limited to essential fields only
+    const users = await models.User.find(query)
+      .sort({ name: 1 }) // Sort alphabetically by name for dropdown usability
+      .select('_id employeeNo name'); // Only select fields needed for dropdown
+
+    // Format response for dropdown usage
+    const dropdownUsers = users.map(user => ({
+      id: user._id,
+      employeeNo: user.employeeNo,
+      name: user.name,
+      // Format display value for dropdown (e.g., "John Doe (EMP123)")
+      displayValue: `${user.name} (${user.employeeNo})`
+    }));
+
+    res.json({
+      status: 'success',
+      message: 'Users for dropdown retrieved successfully',
+      count: dropdownUsers.length,
+      users: dropdownUsers
+    });
+  } catch (err) {
+    console.error('Error getting users for dropdown:', err);
+    res.status(500).json({
+      status: 'error',
+      message: err.message || 'Internal server error',
+    });
+  }
+}
+
+
+
+
+export async function downloadUsersExcel(req, res) {
+  try {
+    const { institutionId } = req.params;
+    const { models } = req.institutionDb;
+    const users = await models.User.find({});
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Users");
+
+    worksheet.columns = [
+      { header: "User ID", key: "_id", width: 24 },
+      { header: "Employee No", key: "employeeNo", width: 15 },
+      { header: "Name", key: "name", width: 25 },
+      { header: "Seniority No", key: "seniorityNo", width: 15 },
+      { header: "User Type", key: "userType", width: 15 },
+      { header: "Card No", key: "cardNo", width: 20 },
+      { header: "Created At", key: "createdAt", width: 24, style: { numFmt: "yyyy-mm-dd hh:mm:ss" } },
+    ];
+
+    users.forEach(user => {
+      worksheet.addRow({
+        _id: user._id.toString(),
+        employeeNo: user.employeeNo,
+        name: user.name,
+        seniorityNo: user.seniorityNo,
+        userType: user.userType,
+        cardNo: user.cardNo,
+        createdAt: user.createdAt
+      });
+    });
+
+    // Save file to public folder with a timestamp
+    const reportsDir = path.join(process.cwd(), "public", "reports");
+    if (!fs.existsSync(reportsDir)) fs.mkdirSync(reportsDir, { recursive: true });
+
+    const filename = `users_${institutionId}_${Date.now()}.xlsx`;
+    const filepath = path.join(reportsDir, filename);
+    await workbook.xlsx.writeFile(filepath);
+
+    // Return the public URL to download the file
+    const fileUrl = `/reports/${filename}`;
+    res.json({ success: true, url: fileUrl });
+  } catch (error) {
+    console.error("Error generating user Excel:", error);
+    res.status(500).json({ success: false, message: "Failed to generate Excel" });
+  }
+}
+export async function importUsersFromDevice(req, res) {
+  try {
+    const { institutionId } = req.params;
+    const { deviceId } = req.body;
+
+    if (!deviceId) {
+      return res.status(400).json({ message: 'Device ID is required' });
+    }
+
+    // Use the institution-specific models from the middleware
+    const { models } = req.institutionDb;
+
+    // Find the device using the institution-specific Device model
+    const device = await models.Device.findById(deviceId);
+    console.log(device);
+
+    if (!device) {
+      return res.status(404).json({ message: 'Device not found' });
+    }
+
+    // Pass the institution-specific User model to fetchUsersFromDevice
+    const users = await fetchUsersFromDevice(device, institutionId, models.User);
+
+    res.json({
+      success: true,
+      message: `Successfully imported ${users.length} users from device to institution database`,
+      count: users.length,
+      users
+    });
+  } catch (err) {
+    console.error('Error importing users:', err);
+    res.status(500).json({ message: err.message });
+  }
+}
+// Fetch a user from MongoDB and push to device
+export async function pushUserToDevice(req, res) {
+  const { userId, deviceId } = req.body;
+
+  try {
+    // Get institution-specific models
+    const { models } = req.institutionDb;
+
+    // 1. Get user from institution-specific MongoDB
+    const user = await models.User.findById(userId);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    // 2. Get device from institution-specific MongoDB
+    const device = await models.Device.findById(deviceId);
+    if (!device) return res.status(404).json({ message: 'Device not found' });
+
+    // 3. Build ISAPI payload
+    const payload = {
+      UserInfo: {
+        employeeNo: user.employeeNo.toString(),
+        name: user.name,
+        userType: user.userType || 'normal',
+        Valid: {
+          enable: true,
+          beginTime: formatISAPITime(new Date('2025-09-10T19:19:20')),
+          endTime: formatISAPITime(new Date('2027-09-09T05:30:00'))
+        },
+        doorRight: '1',
+        RightPlan: [{ doorNo: 1, planTemplateNo: '1' }],
+        PersonInfoExtends: []
+      }
+    };
+
+    // 4. Send user to device
+    const deviceRes = await addPersonToDevice(device, payload);
+
+    // 5. Respond
+    res.json({
+      message: 'User pushed to device successfully',
+      user,
+      deviceRes
+    });
+
+  } catch (err) {
+    console.error('Error pushing user to device:', err);
+    res.status(500).json({ message: err.message });
+  }
+}
+
+
+
+
+
+export async function getUsersWithCurrentMonthAttendance(req, res) {
+  try {
+    const { institutionId } = req.params;
+    const { startDate, endDate } = req.query;
+    const { models, institution } = req.institutionDb;
+    const { User } = models;
+
+    // ====== Date Range ======
+    const now = moment().tz("Asia/Kolkata");
+    const start = startDate
+      ? moment(startDate).tz("Asia/Kolkata").startOf("day")
+      : now.clone().startOf("month");
+    const end = endDate
+      ? moment(endDate).tz("Asia/Kolkata").endOf("day")
+      : now.clone().endOf("month");
+    const daysInMonth = end.date();
+
+    // ====== Cache Check ======
+    const reportsDir = path.join(process.cwd(), "public", "reports");
+    if (!fs.existsSync(reportsDir)) fs.mkdirSync(reportsDir, { recursive: true });
+
+    const monthLabel = start.format("YYYY-MM");
+    const cachedPdfName = `attendance_status_${institutionId}_${monthLabel}.pdf`;
+    const cachedExcelName = `attendance_status_${institutionId}_${monthLabel}.xlsx`;
+    const cachedPdfPath = path.join(reportsDir, cachedPdfName);
+    const cachedExcelPath = path.join(reportsDir, cachedExcelName);
+
+    // If both files exist and it's not a custom date range request, return cached
+    if (!startDate && !endDate && fs.existsSync(cachedPdfPath) && fs.existsSync(cachedExcelPath)) {
+      return res.json({
+        success: true,
+        message: `Monthly attendance for ${start.format("MMMM YYYY")} (cached)`,
+        pdfStatusReport: `/reports/${cachedPdfName}`,
+        excelStatusReport: `/reports/${cachedExcelName}`,
+        pdfDownload: `/reports/${cachedPdfName}`,
+        excelDownload: `/reports/${cachedExcelName}`,
+      });
+    }
+
+    // ====== Fetch Holidays & Leaves ======
+    let holidays = [];
+    let leaveRecords = [];
+    try {
+      if (models.Holiday) {
+        holidays = await models.Holiday.find({
+          institutionId,
+          isActive: true,
+          $and: [
+            { endDate: { $gte: start.toDate() } },
+            { startDate: { $lte: end.toDate() } }
+          ]
+        }).lean();
+      }
+      if (models.Leave) {
+        leaveRecords = await models.Leave.find({
+          institutionId,
+          status: "approved",
+          leaveDate: { $gte: start.toDate(), $lte: end.toDate() }
+        }).lean();
+      }
+    } catch (err) {
+      console.error("Error fetching holidays/leaves:", err);
+    }
+
+    const holidayDates = new Set();
+    holidays.forEach(h => {
+      let curr = moment(h.startDate).startOf("day");
+      const hEnd = moment(h.endDate).startOf("day");
+      while (curr.isSameOrBefore(hEnd)) {
+        if (curr.isSameOrAfter(start) && curr.isSameOrBefore(end)) {
+          holidayDates.add(curr.date());
+        }
+        curr.add(1, "day");
+      }
+    });
+
+    // Valid leaves map: employeeNo -> { day -> leaveType }
+    const userLeavesMap = {};
+    leaveRecords.forEach(l => {
+      const day = moment(l.leaveDate).date();
+      if (!userLeavesMap[l.employeeNo]) userLeavesMap[l.employeeNo] = {};
+      userLeavesMap[l.employeeNo][day] = l.type;
+    });
+
+
+    // ====== Calculate Sundays and 2nd Saturdays ======
+    let sundays = [];
+    let secondSaturdays = [];
+    let nonWorkingDays = new Set();
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateObj = start.clone().date(d);
+      const dayOfWeek = dateObj.isoWeekday(); // 1=Mon, 7=Sun
+      const isSecondSat = dayOfWeek === 6 && Math.floor((d - 1) / 7) === 1;
+      if (isSecondSat) {
+        secondSaturdays.push(dateObj.format("DD-MM-YYYY"));
+        nonWorkingDays.add(d);
+      }
+      if (dayOfWeek === 7) {
+        sundays.push(dateObj.format("DD-MM-YYYY"));
+        nonWorkingDays.add(d);
+      }
+    }
+    // Also, create an array of formatted leave dates for the summary
+    const customLeaveDates = Array.from(holidayDates).sort((a, b) => a - b).map(d => start.clone().date(d).format("DD-MM-YYYY"));
+
+    // ====== Fetch Users & Join Attendance ======
+    const users = await User.aggregate([
+      {
+        $lookup: {
+          from: "attendances",
+          let: { empNo: "$employeeNo" },
+          pipeline: [
+            {
+              $match: {
+                $expr: { $eq: ["$employeeNo", "$$empNo"] },
+                timestamp: { $gte: start.toDate(), $lte: end.toDate() },
+              },
+            },
+            {
+              $group: {
+                _id: {
+                  day: { $dayOfMonth: "$timestamp" },
+                  month: { $month: "$timestamp" },
+                  year: { $year: "$timestamp" },
+                },
+                firstCheckIn: { $min: "$timestamp" },
+                lastCheckOut: { $max: "$timestamp" },
+              },
+            },
+            {
+              $project: {
+                _id: 0,
+                date: {
+                  $dateFromParts: {
+                    year: "$_id.year",
+                    month: "$_id.month",
+                    day: "$_id.day",
+                  },
+                },
+                firstCheckIn: 1,
+                lastCheckOut: 1,
+              },
+            },
+            { $sort: { date: 1 } },
+          ],
+          as: "attendance",
+        },
+      },
+      { $sort: { seniorityNo: 1 } },
+    ]);
+
+    // ====== Fetch On Duty Records ======
+    let onDutyRecords = [];
+    try {
+      const OnDuty = models.OnDuty;
+      if (OnDuty) {
+        onDutyRecords = await OnDuty.find({
+          institutionId,
+          $and: [
+            { startDate: { $lte: end.toDate() } },
+            { endDate: { $gte: start.toDate() } }
+          ]
+        }).lean();
+      }
+    } catch { }
+
+    // ====== On Duty mapping ======
+    const onDutyMap = {};
+    onDutyRecords.forEach(duty => {
+      const dutyStart = moment(duty.startDate).startOf('day');
+      const dutyEnd = moment(duty.endDate).startOf('day');
+      const currentDate = moment(dutyStart);
+      while (currentDate.isSameOrBefore(dutyEnd)) {
+        const d = currentDate.date();
+        const monthYear = currentDate.format('MM-YYYY');
+        if (monthYear === start.format('MM-YYYY')) {
+          if (!onDutyMap[duty.employeeNo]) onDutyMap[duty.employeeNo] = {};
+          onDutyMap[duty.employeeNo][d] = {
+            description: duty.description,
+            startDate: duty.startDate,
+            endDate: duty.endDate
+          };
+        }
+        currentDate.add(1, 'day');
+      }
+    });
+
+    // ====== Format Attendance Per User (skip non-working days, handle holidays) ======
+    const usersFormatted = users.map(user => {
+      const attMap = {};
+      for (let d = 1; d <= daysInMonth; d++) {
+        // If maternity leave, it overrides non-working days logic? 
+        // Usually maternity leave counts even on weekends, but for report visual we might still hide weekends.
+        // Let's stick to existing logic: if non-working day, skip.
+        // BUT user asked for "dates from 07-01 to 07-06". If these include weekends, they usually want to see MTL.
+        // However, existing logic lines 868-869 skips nonWorkingDays.
+        // If I skip, it won't show MTL on Sunday.
+        // I will respect `nonWorkingDays` logic for now as it seems global.
+
+        if (nonWorkingDays.has(d)) continue;
+        const dateObj = start.clone().date(d);
+        const att = user.attendance.find(a => moment(a.date).date() === d);
+
+        let status = "A";
+        let inTime = "";
+        let outTime = "";
+        let onDutyDescription = "";
+
+        // Handle holidays/leaves
+        if (holidayDates.has(d)) {
+          if (onDutyMap[user.employeeNo] && onDutyMap[user.employeeNo][d]) {
+            status = "OD";
+            onDutyDescription = onDutyMap[user.employeeNo][d].description;
+          } else {
+            status = "-";
+          }
+          attMap[d] = { in: "", out: "", status, onDutyDescription };
+          continue;
+        }
+
+        // Handle Individual Approved Leaves (Modified for Maternity)
+        if (userLeavesMap[user.employeeNo] && userLeavesMap[user.employeeNo][d]) {
+          const leaveType = userLeavesMap[user.employeeNo][d];
+          status = (leaveType === 'maternity') ? "MTL" : "L";
+          attMap[d] = { in: "", out: "", status, onDutyDescription: "" };
+          continue;
+        }
+
+        // All "OD" logic
+        if (onDutyMap[user.employeeNo] && onDutyMap[user.employeeNo][d]) {
+          status = "OD";
+          onDutyDescription = onDutyMap[user.employeeNo][d].description;
+          if (att) {
+            if (att.usedCompOff) {
+              inTime = "CompOff";
+              outTime = "";
+              status = "P";
+            } else {
+              inTime = att.firstCheckIn
+                ? moment(att.firstCheckIn).tz("Asia/Kolkata").format("HH:mm")
+                : "";
+              let showOutTime = false;
+              const today = moment().tz("Asia/Kolkata").startOf("day");
+              if (dateObj.isBefore(today)) showOutTime = true;
+              else if (dateObj.isSame(today)) {
+                if (moment().tz("Asia/Kolkata").hour() >= 12) showOutTime = true;
+              }
+              outTime = showOutTime && att.lastCheckOut
+                ? moment(att.lastCheckOut).tz("Asia/Kolkata").format("HH:mm")
+                : "";
+            }
+          }
+        } else if (att) {
+          if (att.usedCompOff) {
+            inTime = "CompOff";
+            outTime = "";
+            status = "P";
+          } else {
+            inTime = att.firstCheckIn
+              ? moment(att.firstCheckIn).tz("Asia/Kolkata").format("HH:mm")
+              : "";
+            let showOutTime = false;
+            const today = moment().tz("Asia/Kolkata").startOf("day");
+            if (dateObj.isBefore(today)) showOutTime = true;
+            else if (dateObj.isSame(today)) {
+              if (moment().tz("Asia/Kolkata").hour() >= 12) showOutTime = true;
+            }
+            outTime = showOutTime && att.lastCheckOut
+              ? moment(att.lastCheckOut).tz("Asia/Kolkata").format("HH:mm")
+              : "";
+            status = "P";
+          }
+        }
+        attMap[d] = {
+          in: inTime,
+          out: outTime,
+          status,
+          onDutyDescription
+        };
+      }
+      return {
+        employeeNo: `${institution.shortName?.toUpperCase() || ""}-${user.employeeNo}`,
+        name: user.name?.toUpperCase() || "",
+        seniorityNo: user.seniorityNo || null,
+        attendance: attMap
+      };
+    });
+
+    // ====== File Paths ======
+    const monthLabelForFile = start.format("YYYY-MM");
+    const isDefaultRange = !startDate && !endDate;
+
+    const pdfFileName = isDefaultRange
+      ? `attendance_status_${institutionId}_${monthLabelForFile}.pdf`
+      : `attendance_status_${institutionId}_${Date.now()}.pdf`;
+    const pdfFilePath = path.join(reportsDir, pdfFileName);
+
+    const excelFileName = isDefaultRange
+      ? `attendance_status_${institutionId}_${monthLabelForFile}.xlsx`
+      : `attendance_status_${institutionId}_${Date.now()}.xlsx`;
+    const excelFilePath = path.join(reportsDir, excelFileName);
+
+    // ====== (PDF/Excel generation - unchanged, use your existing routines) ======
+
+
+    // ====== PDF Generation ======
+    await new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ margin: 10, size: "A3", layout: "landscape" });
+      const stream = fs.createWriteStream(pdfFilePath);
+      doc.pipe(stream);
+
+      const left = 40;
+      const topMargin = 100;
+      const rowHeight = 20;
+      const colEmployeeNoWidth = 100;
+      const colNameWidth = 160;
+      const colDateWidth = 45;
+      const colRemarksWidth = 250;
+      const maxDateColsPerPage = 5;
+      const logoPath = path.join(process.cwd(), "public", "logo.png");
+
+      // Build the filtered days (only working days)
+      const workingDays = Array.from({ length: daysInMonth }, (_, i) => i + 1).filter(d => !nonWorkingDays.has(d));
+      const dateChunks = [];
+      for (let i = 0; i < workingDays.length; i += maxDateColsPerPage) {
+        dateChunks.push({ days: workingDays.slice(i, i + maxDateColsPerPage) });
+      }
+
+      function drawHeader(x, y, days) {
+        let currentX = x;
+        doc.fontSize(10).font("Helvetica-Bold").fillColor("white");
+        const headerColor = "#8B4513";
+        function drawCell(label, width, height = rowHeight * 2) {
+          doc.rect(currentX, y, width, height).fill(headerColor).fillColor("white");
+          doc.text(label, currentX, y + 8, { width, align: "center" });
+          currentX += width;
+        }
+        drawCell("Employee No", colEmployeeNoWidth);
+        drawCell("Employee Name", colNameWidth);
+
+        for (const d of days) {
+          const dateStr = start.clone().date(d).format("DD-MM-YYYY");
+          doc.rect(currentX, y, colDateWidth * 3, rowHeight).fill(headerColor).fillColor("white");
+          doc.text(dateStr, currentX, y + 6, { width: colDateWidth * 3, align: "center" });
+          ["In", "Out", "Status"].forEach((label) => {
+            doc.rect(currentX, y + rowHeight, colDateWidth, rowHeight).fill(headerColor).fillColor("white");
+            doc.text(label, currentX, y + rowHeight + 6, { width: colDateWidth, align: "center" });
+            currentX += colDateWidth;
+          });
+        }
+        drawCell("Remarks", colRemarksWidth);
+        doc.fillColor("black");
+      }
+
+      function drawRow(x, y, days, user, isOdd) {
+        let currentX = x;
+        const totalWidth = colEmployeeNoWidth + colNameWidth + colDateWidth * 3 * days.length + colRemarksWidth;
+        if (isOdd) {
+          doc.rect(x, y, totalWidth, rowHeight).fill("#F8F8F8").fillColor("black");
+        }
+        doc.strokeColor("#000000").lineWidth(0.5);
+        doc.fontSize(10);
+
+        doc.rect(currentX, y, colEmployeeNoWidth, rowHeight).stroke();
+        doc.text(user.employeeNo, currentX + 5, y + 6, { width: colEmployeeNoWidth - 10, align: "center" });
+        currentX += colEmployeeNoWidth;
+
+        doc.rect(currentX, y, colNameWidth, rowHeight).stroke();
+        doc.text(`${user.seniorityNo || ""}. ${user.name}`, currentX + 5, y + 6, { width: colNameWidth - 10 });
+        currentX += colNameWidth;
+
+        let onDutyDescriptions = [];
+        for (const d of days) {
+          const att = user.attendance[d] || { in: "", out: "", status: "A", onDutyDescription: "" };
+          if (att.status === "OD" && att.onDutyDescription) {
+            onDutyDescriptions.push(`${d}: ${att.onDutyDescription}`);
+          }
+          doc.rect(currentX, y, colDateWidth, rowHeight).stroke();
+          doc.text(att.in, currentX + 5, y + 6, { width: colDateWidth - 10, align: "center" });
+          currentX += colDateWidth;
+          doc.rect(currentX, y, colDateWidth, rowHeight).stroke();
+          doc.text(att.out, currentX + 5, y + 6, { width: colDateWidth - 10, align: "center" });
+          currentX += colDateWidth;
+          doc.rect(currentX, y, colDateWidth, rowHeight).stroke();
+          doc.font("Helvetica-Bold").text(att.status, currentX + 5, y + 6, { width: colDateWidth - 10, align: "center" });
+          doc.font("Helvetica");
+          currentX += colDateWidth;
+        }
+        // Remarks
+        doc.rect(currentX, y, colRemarksWidth, rowHeight).stroke();
+        if (onDutyDescriptions.length > 0) {
+          doc.text(onDutyDescriptions.join("; "), currentX + 5, y + 6, { width: colRemarksWidth - 10 });
+        }
+      }
+
+      function drawLegend(y) {
+        doc.fontSize(10).font("Helvetica-Bold").text("Status Codes:", left, y);
+        doc.fontSize(10).text(
+          "P = Present   PL = Present Late   PL/HD = Present Late Half Day   A = Absent   L = Leave   OD = On Duty   H = Holiday   PER = Permission   HD = Half Day",
+          left,
+          y + 15
+        );
+        doc.text("On Duty (OD)", left + 20, y + 35);
+      }
+
+      let pageNo = 0;
+      for (const chunk of dateChunks) {
+        if (pageNo > 0) doc.addPage();
+        if (fs.existsSync(logoPath)) doc.image(logoPath, (doc.page.width - 50) / 2, 20, { width: 50, height: 50 });
+        doc.fontSize(14).font("Helvetica-Bold").text(institution.name, 100, 70, { align: "center" });
+        doc.fontSize(10).font("Helvetica").text(
+          `Attendance Status Report (${start.format("MMM YYYY")})`,
+          100,
+          90,
+          { align: "center" }
+        );
+
+        let y = topMargin;
+        drawHeader(left, y, chunk.days);
+        y += rowHeight * 2;
+
+        const maxRowsPerPage = 25;
+        let rowCount = 0;
+
+        for (const user of usersFormatted) {
+          if (rowCount >= maxRowsPerPage) {
+            drawLegend(y);
+            doc.addPage();
+            y = topMargin;
+            drawHeader(left, y, chunk.days);
+            y += rowHeight * 2;
+            rowCount = 0;
+          }
+          drawRow(left, y, chunk.days, user, rowCount % 2 === 1);
+          y += rowHeight;
+          rowCount++;
+        }
+        drawLegend(y);
+        pageNo++;
+      }
+
+      // BOTTOM SUMMARY: Sundays, 2nd Sat, leave days
+      // Estimate the height required for the summary section
+      const linesForLeaves = usersFormatted.reduce((acc, user) => {
+        const cnt = Object.values(user.attendance).filter(att => att.status === "L").length;
+        return cnt ? acc + 1 : acc;
+      }, 0);
+      const approxSummaryHeight = 60 + (linesForLeaves * 13); // Sundays/2nd Sats + header + per-user leave lines
+      const marginBottom = 32;
+
+      let yBottom = doc.y + 30;
+
+      // If not enough space, add a page; otherwise, move cursor down close to bottom margin
+      if ((yBottom + approxSummaryHeight + marginBottom) > doc.page.height) {
+        doc.addPage();
+        yBottom = doc.page.height - approxSummaryHeight - marginBottom;
+      } else {
+        // Move the cursor down to fit summary at lower section, if not already close to bottom
+        yBottom = doc.page.height - approxSummaryHeight - marginBottom;
+      }
+
+      doc.fontSize(11).font("Helvetica-Bold").text("Non-Working Days/Leaves:", left, yBottom);
+      yBottom += 18;
+      doc.fontSize(10).font("Helvetica").text("Sundays: " + sundays.join(", "), left, yBottom);
+      yBottom += 15;
+      doc.fontSize(10).text("2nd Saturdays: " + secondSaturdays.join(", "), left, yBottom);
+      yBottom += 15;
+      doc.fontSize(10).text("Institution Holidays/Leaves: " + customLeaveDates.join(", "), left, yBottom);
+      yBottom += 18;
+      usersFormatted.forEach(user => {
+        const leaves = [];
+        for (const d in user.attendance) {
+          if (user.attendance[d].status === "L") {
+            leaves.push(start.clone().date(+d).format("DD-MM-YYYY"));
+          }
+        }
+        if (leaves.length) {
+          doc.fontSize(10).fillColor("black").text(`${user.name} (Leave Days): ${leaves.join(", ")}`, left, yBottom);
+          yBottom += 13;
+        }
+      });
+
+      doc.end();
+      stream.on("finish", resolve);
+      stream.on("error", reject);
+    });
+
+    // ====== Excel Generation ======
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Attendance");
+
+    // Build the filtered working days
+    const workingDays = Array.from({ length: daysInMonth }, (_, i) => i + 1).filter(d => !nonWorkingDays.has(d));
+    // Header
+    const headerRow1 = [
+      "Employee No",
+      "Employee Name",
+      ...workingDays.map(d => start.clone().date(d).format("DD-MM-YYYY")),
+      "On Duty Details"
+    ];
+    sheet.addRow(headerRow1);
+
+    const headerRow2 = [
+      "",
+      "",
+      ...workingDays.map(() => "Status"),
+      ""
+    ];
+    sheet.addRow(headerRow2);
+
+    sheet.getRow(1).font = { bold: true };
+    sheet.getRow(2).font = { bold: true };
+    sheet.mergeCells(1, 1, 2, 1);
+    sheet.mergeCells(1, 2, 2, 2);
+    sheet.mergeCells(1, workingDays.length + 3, 2, workingDays.length + 3);
+
+    usersFormatted.forEach(user => {
+      const row = [
+        user.employeeNo,
+        `${user.seniorityNo || ""}. ${user.name}`,
+        ...workingDays.map(d => {
+          const att = user.attendance[d] || { status: "A" };
+          return att.status;
+        }),
+      ];
+      const onDutyDetails = [];
+      for (const d of workingDays) {
+        const att = user.attendance[d];
+        if (att && att.status === "OD" && att.onDutyDescription) {
+          onDutyDetails.push(`${d}: ${att.onDutyDescription}`);
+        }
+      }
+      row.push(onDutyDetails.join("; "));
+      sheet.addRow(row);
+    });
+
+    // BOTTOM SUMMARY: Sundays, 2nd Sat, leave days
+
+    sheet.addRow([]);
+    sheet.addRow(["Sundays: " + sundays.join(", ")]);
+    sheet.addRow(["2nd Saturdays: " + secondSaturdays.join(", ")]);
+    sheet.addRow(["Institution Holidays/Leaves: " + customLeaveDates.join(", ")]);
+    usersFormatted.forEach(user => {
+      const leaves = [];
+      for (const d in user.attendance) {
+        if (user.attendance[d].status === "L") {
+          leaves.push(start.clone().date(+d).format("DD-MM-YYYY"));
+        }
+      }
+      if (leaves.length) {
+        sheet.addRow([`${user.name} (Leave Days): ${leaves.join(", ")}`]);
+      }
+    });
+
+    await workbook.xlsx.writeFile(excelFilePath);
+
+
+
+    res.json({
+      success: true,
+      count: usersFormatted.length,
+      message: `Monthly attendance for ${start.format("MMMM YYYY")}`,
+      pdfStatusReport: `/reports/${pdfFileName}`,
+      excelStatusReport: `/reports/${excelFileName}`,
+      pdfDownload: `/reports/${pdfFileName}`,
+      excelDownload: `/reports/${excelFileName}`,
+      users: usersFormatted,
+    });
+  } catch (err) {
+    console.error("❌ Error in attendance export:", err);
+    res.status(500).json({ message: err.message });
+  }
+}
+
+
+
+// export async function getUsersWithDailyAttendance(req, res) {
+//   try {
+//     const { institutionId } = req.params;
+//     const { date, startTime, endTime } = req.query;
+//     const { models, institution } = req.institutionDb;
+
+//     const targetDate = date ? new Date(date) : new Date();
+
+//     // -------------------- Date Range --------------------
+//     let startOfDay, endOfDay;
+//     if (startTime && endTime) {
+//       startOfDay = new Date(`${targetDate.toISOString().split("T")[0]}T${startTime}`);
+//       endOfDay = new Date(`${targetDate.toISOString().split("T")[0]}T${endTime}`);
+//     } else {
+//       startOfDay = new Date(targetDate.setHours(0, 0, 0, 0));
+//       endOfDay = new Date(targetDate.setHours(23, 59, 59, 999));
+//     }
+
+//     // -------------------- Fetch Users + Attendance --------------------
+//     let users = await models.User.aggregate([
+//       {
+//         $lookup: {
+//           from: "attendances",
+//           let: { empNo: "$employeeNo" },
+//           pipeline: [
+//             {
+//               $match: {
+//                 $expr: { $eq: ["$employeeNo", "$$empNo"] },
+//                 timestamp: { $gte: startOfDay, $lte: endOfDay },
+//               },
+//             },
+//             {
+//               $group: {
+//                 _id: null,
+//                 firstCheckIn: { $min: "$timestamp" },
+//                 lastCheckOut: { $max: "$timestamp" },
+//               },
+//             },
+//             { $project: { _id: 0, firstCheckIn: 1, lastCheckOut: 1 } },
+//           ],
+//           as: "attendance",
+//         },
+//       },
+//       { $sort: { seniorityNo: 1 } },
+//     ]);
+
+//     // -------------------- Fetch On Duty Records --------------------
+//     try {
+//       // Get the OnDuty model
+//       const OnDuty = models.OnDuty;
+
+//       if (OnDuty) {
+//         // Find on-duty records that overlap with the target date
+//         const onDutyRecords = await OnDuty.find({
+//           institutionId,
+//           $and: [
+//             { startDate: { $lte: endOfDay } },
+//             { endDate: { $gte: startOfDay } }
+//           ]
+//         }).lean();
+
+//         console.log(`Found ${onDutyRecords.length} on-duty records for ${targetDate.toISOString().split('T')[0]}`);
+
+//         // Create a map for quick lookup
+//         const onDutyMap = {};
+//         onDutyRecords.forEach(duty => {
+//           onDutyMap[duty.employeeNo] = duty;
+//         });
+
+//         // Add on-duty information to users
+//         users = users.map(user => {
+//           const onDutyRecord = onDutyMap[user.employeeNo];
+//           if (onDutyRecord) {
+//             return {
+//               ...user,
+//               onDuty: true,
+//               onDutyDescription: onDutyRecord.description,
+//               status: 'On Duty'
+//             };
+//           }
+//           return user;
+//         });
+
+//         // Check if there are any on-duty users who aren't in the users list
+//         // This can happen if they don't have attendance records for the day
+//         const userEmployeeNos = new Set(users.map(u => u.employeeNo));
+
+//         for (const employeeNo in onDutyMap) {
+//           if (!userEmployeeNos.has(employeeNo)) {
+//             // This user is on duty but doesn't have attendance records
+//             // Fetch the user details from the database
+//             const onDutyUser = await models.User.findOne({ employeeNo }).lean();
+
+//             if (onDutyUser) {
+//               // Add this user to the users list with on-duty status
+//               users.push({
+//                 ...onDutyUser,
+//                 attendance: [],
+//                 onDuty: true,
+//                 onDutyDescription: onDutyMap[employeeNo].description,
+//                 status: 'On Duty',
+//                 lateBy: ''
+//               });
+//             }
+//           }
+//         }
+//       }
+//     } catch (onDutyErr) {
+//       console.error('Error fetching On Duty records:', onDutyErr);
+//       // Continue without On Duty records if there's an error
+//     }
+
+//     const workingStart = new Date(targetDate);
+//     workingStart.setHours(9, 0, 0, 0);
+
+//     const lateThreshold = new Date(targetDate);
+//     lateThreshold.setHours(8, 30, 0, 0);
+
+//     const lateUsers = [];
+//     const absentees = [];
+
+//     users.forEach(user => {
+//       // Skip status calculation if user is already marked as On Duty
+//       if (user.onDuty) {
+//         // Status is already set to 'On Duty' in the previous step
+//         user.lateBy = ""; // No late calculation for on-duty users
+//         return; // Skip the rest of the attendance processing
+//       }
+
+//       const att = user.attendance[0];
+//       if (!att) {
+//         user.lateBy = "";
+//         user.status = "A"; // Absent
+//         absentees.push(user);
+//       } else {
+//         const checkIn = new Date(att.firstCheckIn);
+//         const checkOut = new Date(att.lastCheckOut);
+
+//         const noonTime = new Date(targetDate);
+//         noonTime.setHours(12, 0, 0, 0);
+
+//         const halfDayEnd = new Date(targetDate);
+//         halfDayEnd.setHours(16, 30, 0, 0);
+
+//         const isOnTime = checkIn <= workingStart;
+//         const isLate = checkIn > workingStart;
+//         const isHalfDay = checkIn >= noonTime || checkOut <= halfDayEnd;
+
+//         user.lateBy = isLate
+//           ? Math.floor((checkIn - workingStart) / 60000) + " mins"
+//           : "";
+
+//         if (isOnTime && isHalfDay) user.status = "P/HD";
+//         else if (isOnTime) user.status = "P";
+//         else if (isLate && isHalfDay) user.status = "PL/HD";
+//         else if (isLate) user.status = "PL";
+//         else user.status = "P";
+
+//         // Only add to late users if not on duty
+//         if (checkIn > lateThreshold && !user.onDuty && user.status !== 'On Duty') {
+//           lateUsers.push(user);
+//         }
+//       }
+//     });
+
+//     // -------------------- Reports Directory --------------------
+//     const reportsDir = path.join(process.cwd(), "public", "reports");
+//     if (!fs.existsSync(reportsDir)) fs.mkdirSync(reportsDir, { recursive: true });
+
+//     const formattedDate = targetDate.toISOString().split("T")[0];
+
+//     // -------------------- GENERIC FUNCTION: EXCEL --------------------
+//     const createExcel = async (data, title, fileName, includeRemarks = true) => {
+//       const workbook = new ExcelJS.Workbook();
+//       const worksheet = workbook.addWorksheet("Attendance");
+
+//       const colHeaders = includeRemarks
+//         ? ["Employee No", "Name", "Check-In", "Check-Out", "Late By", "Status", "Remarks"]
+//         : ["Employee No", "Name", "Check-In", "Check-Out", "Late By", "Status"];
+
+//       worksheet.mergeCells("A1:G1");
+//       worksheet.getCell("A1").value = title;
+//       worksheet.getCell("A1").font = { size: 14, bold: true };
+//       worksheet.getCell("A1").alignment = { horizontal: "center" };
+
+//       worksheet.mergeCells("A2:G2");
+//       worksheet.getCell("A2").value = `Date: ${formattedDate}`;
+//       worksheet.getCell("A2").alignment = { horizontal: "center" };
+
+//       worksheet.addRow(colHeaders).eachCell(cell => {
+//         cell.font = { bold: true };
+//         cell.alignment = { horizontal: "center" };
+//       });
+
+//       data.forEach(user => {
+//         const att = user.attendance?.[0] || {};
+//         const row = [
+//           `${institution.shortName?.toUpperCase() || "ORG"}-${user.employeeNo}`,
+//           user.name?.toUpperCase() || "",
+//           att.firstCheckIn ? moment(att.firstCheckIn).tz("Asia/Kolkata").format("HH:mm") : "",
+//           att.lastCheckOut ? moment(att.lastCheckOut).tz("Asia/Kolkata").format("HH:mm") : "",
+//           user.lateBy || "",
+//           user.status || "",
+//         ];
+//         if (includeRemarks) row.push("");
+//         worksheet.addRow(row);
+//       });
+
+//       const filePath = path.join(reportsDir, fileName);
+//       await workbook.xlsx.writeFile(filePath);
+//       return filePath;
+//     };
+
+//     // -------------------- GENERIC FUNCTION: PDF --------------------
+//     const createPDF = async (data, title, fileName, includeRemarks = true) => {
+//       const pdfPath = path.join(reportsDir, fileName);
+
+//       await new Promise((resolve, reject) => {
+//         const doc = new PDFDocument({ margin: 30, size: 'A3', layout: 'landscape' });
+//         const stream = fs.createWriteStream(pdfPath);
+//         doc.pipe(stream);
+
+//         const rowHeight = 20;
+//         const left = 50;
+
+//         // Column widths
+//         const colWidths = includeRemarks
+//           ? [80, 220, 80, 80, 80, 80, 200, 200]
+//           : [80, 220, 80, 80, 80, 120, 200];
+
+//         // Column headers
+//         const headers = includeRemarks
+//           ? ["Employee No", "Name", "Check-In", "Check-Out", "Late By", "Status", "On Duty Description", "Remarks"]
+//           : ["Employee No", "Name", "Check-In", "Check-Out", "Late By", "Status", "On Duty Description"];
+
+//         // ⭐ REUSABLE HEADER FUNCTION
+//        const drawHeader = () => {
+//   // Title
+//   doc.fontSize(14).font('Helvetica-Bold').text(title, { align: 'center' });
+
+//   // Date
+//   doc.fontSize(10).text(`Date: ${formattedDate}`, { align: 'center' });
+
+//   // 🔥 IMPORTANT: Reset Y position to avoid automatic gaps!
+//   const headerStartY = doc.y + 5;
+//   doc.y = headerStartY;
+
+//   let x = left;
+//   let y = doc.y;
+
+//   // Draw table header row
+//   headers.forEach((header, i) => {
+//     doc.rect(x, y, colWidths[i], rowHeight)
+//       .fill('#8B4513')
+//       .stroke();
+
+//     doc.fillColor('white')
+//       .font('Helvetica-Bold')
+//       .fontSize(10)
+//       .text(header, x + 5, y + 5, { 
+//         width: colWidths[i] - 10, 
+//         align: 'center' 
+//       });
+
+//     x += colWidths[i];
+//   });
+
+//   doc.fillColor('black');
+
+//   // Next row exact Y (NO EXTRA GAP)
+//   return y + rowHeight;
+// };
+
+
+//         // ⭐ Draw header on first page
+//         let y = drawHeader();
+
+//         // ---------------- LOOP ROWS ----------------
+//         data.forEach((user) => {
+//           const att = user.attendance?.[0] || {};
+//           const isOnDuty = user.onDuty || user.status === "On Duty";
+//           const onDutyDescription = user.onDutyDescription || "";
+
+//           const row = [
+//             `${institution.shortName?.toUpperCase() || "ORG"}-${user.employeeNo}`,
+//             user.name?.toUpperCase() || "",
+//             att.firstCheckIn
+//               ? moment(att.firstCheckIn).tz("Asia/Kolkata").format("HH:mm")
+//               : "",
+//             att.lastCheckOut
+//               ? moment(att.lastCheckOut).tz("Asia/Kolkata").format("HH:mm")
+//               : "",
+//             user.lateBy || "",
+//             isOnDuty ? "On Duty" : user.status || "",
+//             onDutyDescription,
+//           ];
+
+//           if (includeRemarks) row.push("");
+
+//           let x = left;
+
+//           // ⭐ Add new page if needed
+//           if (y + rowHeight > doc.page.height - 50) {
+//             doc.addPage({ size: "A3", layout: "landscape", margin: 30 });
+//             y = drawHeader(); // draw header again
+//           }
+
+//           // Draw row
+//           row.forEach((text, i) => {
+//             // On-duty rows highlighted
+//             if (isOnDuty) {
+//               doc.rect(x, y, colWidths[i], rowHeight).fill("#E6F0FF").stroke();
+//             } else {
+//               doc.rect(x, y, colWidths[i], rowHeight).stroke();
+//             }
+
+//             // Row text
+//             doc.fillColor("black")
+//               .font("Helvetica")
+//               .fontSize(9)
+//               .text(text, x + 5, y + 5, {
+//                 width: colWidths[i] - 10,
+//                 align: "center",
+//               });
+
+//             x += colWidths[i];
+//           });
+
+//           y += rowHeight;
+//         });
+
+//         doc.end();
+
+//         stream.on("finish", resolve);
+//         stream.on("error", reject);
+//       });
+
+//       return pdfPath;
+//     };
+
+//     // -------------------- CREATE REPORTS --------------------
+//     const mainExcel = await createExcel(users, `${institution.name} - Attendance Report`, `attendance_${institutionId}_${formattedDate}.xlsx`);
+//     const mainPDF = await createPDF(users, `${institution.name} - Attendance Report`, `attendance_${institutionId}_${formattedDate}.pdf`);
+
+//     // Filter out any on-duty users from the late users list
+//     const filteredLateUsers = lateUsers.filter(user => !user.onDuty && user.status !== 'On Duty');
+
+//     let lateExcel = null, latePDF = null;
+//     if (filteredLateUsers.length > 0) {
+//       lateExcel = await createExcel(filteredLateUsers, `${institution.name} - Late Employees Report`, `attendance_late_${institutionId}_${formattedDate}.xlsx`, false);
+//       latePDF = await createPDF(filteredLateUsers, `${institution.name} - Late Employees Report`, `attendance_late_${institutionId}_${formattedDate}.pdf`, false);
+//     }
+
+//     // Filter out any on-duty users from the absentees list
+//     const filteredAbsentees = absentees.filter(user => !user.onDuty && user.status !== 'On Duty');
+
+//     let absentExcel = null, absentPDF = null;
+//     if (filteredAbsentees.length > 0) {
+//       absentExcel = await createExcel(filteredAbsentees, `${institution.name} - Absentees Report`, `attendance_absent_${institutionId}_${formattedDate}.xlsx`, false);
+//       absentPDF = await createPDF(filteredAbsentees, `${institution.name} - Absentees Report`, `attendance_absent_${institutionId}_${formattedDate}.pdf`, false);
+//     }
+
+//     // -------------------- RESPONSE --------------------
+//     res.json({
+//       success: true,
+//       message: `Attendance for ${formattedDate} fetched successfully`,
+//       excelDownload: `/reports/${path.basename(mainExcel)}`,
+//       pdfDownload: `/reports/${path.basename(mainPDF)}`,
+//       lateExcelDownload: lateExcel ? `/reports/${path.basename(lateExcel)}` : null,
+//       latePdfDownload: latePDF ? `/reports/${path.basename(latePDF)}` : null,
+//       absentExcelDownload: absentExcel ? `/reports/${path.basename(absentExcel)}` : null,
+//       absentPdfDownload: absentPDF ? `/reports/${path.basename(absentPDF)}` : null,
+//     });
+
+//   } catch (error) {
+//     console.error("Error fetching attendance:", error);
+//     res.status(500).json({ success: false, message: "Error fetching attendance" });
+//   }
+// }
+
+
+
+// export async function getUsersWithDailyAttendance(req, res) {
+//   try {
+//     const { institutionId } = req.params;
+//     const { date } = req.query;
+//     const { models, institution } = req.institutionDb; // ✅ from setupInstitutionDb
+
+//     const targetDate = date ? new Date(date) : new Date();
+
+//     const startOfDay = new Date(
+//       targetDate.getFullYear(),
+//       targetDate.getMonth(),
+//       targetDate.getDate(),
+//       0, 0, 0
+//     );
+//     const endOfDay = new Date(
+//       targetDate.getFullYear(),
+//       targetDate.getMonth(),
+//       targetDate.getDate(),
+//       23, 59, 59
+//     );
+
+//     // ✅ Fetch users and their attendance from institution-specific DB
+// let users = await models.User.aggregate([
+//   {
+//     $lookup: {
+//       from: "attendances",
+//       let: { empNo: "$employeeNo" },
+//       pipeline: [
+//         {
+//           $match: {
+//             $expr: { $eq: ["$employeeNo", "$$empNo"] },
+//             timestamp: { $gte: startOfDay, $lte: endOfDay },
+//           },
+//         },
+//         {
+//           $group: {
+//             _id: null,
+//             firstCheckIn: { $min: "$timestamp" },
+//             lastCheckOut: { $max: "$timestamp" },
+//           },
+//         },
+//         {
+//           $project: { _id: 0, firstCheckIn: 1, lastCheckOut: 1 },
+//         },
+//       ],
+//       as: "attendance",
+//     },
+//   },
+//   {
+//     $sort: { seniorityNo: 1 }  // Sort ascending by seniorityNo
+//   }
+// ]);
+
+
+//     // -------------------- Attendance Status Logic --------------------
+//     users.forEach(user => {
+//       const att = user.attendance[0];
+//       if (!att) {
+//         user.lateBy = "";
+//         user.status = "A"; // Absent
+//       } else {
+//         const checkIn = new Date(att.firstCheckIn);
+//         const checkOut = new Date(att.lastCheckOut);
+
+//         const reportingTime = new Date(targetDate);
+//         reportingTime.setHours(9, 0, 0, 0);
+
+//         const noonTime = new Date(targetDate);
+//         noonTime.setHours(12, 0, 0, 0);
+
+//         const halfDayEnd = new Date(targetDate);
+//         halfDayEnd.setHours(16, 30, 0, 0);
+
+//         const isOnTime = Math.abs(checkIn - reportingTime) < 60000;
+//         const isLate = checkIn > reportingTime && !isOnTime;
+//         const isHalfDay = checkIn >= noonTime || checkOut <= halfDayEnd;
+
+//         user.lateBy = isLate
+//           ? Math.floor((checkIn - reportingTime) / 60000) + " mins"
+//           : "";
+
+//         if (isOnTime && isHalfDay) user.status = "P/HD";
+//         else if (isOnTime) user.status = "P";
+//         else if (isLate && isHalfDay) user.status = "PL/HD";
+//         else if (isLate) user.status = "PL";
+//         else user.status = "P";
+//       }
+//     });
+
+//     // -------------------- Reports Directory --------------------
+//     const reportsDir = path.join(process.cwd(), "public", "reports");
+//     if (!fs.existsSync(reportsDir)) fs.mkdirSync(reportsDir, { recursive: true });
+
+//     const formattedDate = targetDate.toISOString().split("T")[0];
+
+//     // =========================== Excel Report ===========================
+//     const workbook = new ExcelJS.Workbook();
+//     const worksheet = workbook.addWorksheet("Daily Attendance");
+
+//     worksheet.mergeCells("A1:G1");
+//     worksheet.getCell("A1").value = `${institution.name} - Attendance Report`;
+//     worksheet.getCell("A1").font = { size: 14, bold: true };
+//     worksheet.getCell("A1").alignment = { horizontal: "center" };
+
+//     worksheet.mergeCells("A2:G2");
+//     worksheet.getCell("A2").value = `Date: ${formattedDate}`;
+//     worksheet.getCell("A2").alignment = { horizontal: "center" };
+
+//     worksheet.addRow(["Employee No", "Name", "Check-In", "Check-Out", "Late By", "Status", "Remarks"])
+//       .eachCell(cell => {
+//         cell.font = { bold: true };
+//         cell.alignment = { horizontal: "center" };
+//       });
+
+//     users.forEach(user => {
+//       const att = user.attendance[0] || {};
+//       worksheet.addRow([
+//         `${institution.shortName?.toUpperCase() || "ORG"}-${user.employeeNo}`,
+//         user.name?.toUpperCase() || "",
+//         att.firstCheckIn ? moment(att.firstCheckIn).tz("Asia/Kolkata").format("HH:mm") : "",
+//         att.lastCheckOut ? moment(att.lastCheckOut).tz("Asia/Kolkata").format("HH:mm") : "",
+//         user.lateBy || "",
+//         user.status || "",
+//         ""
+//       ]);
+//     });
+
+//     const excelFileName = `attendance_${institutionId}_${formattedDate}.xlsx`;
+//     const excelFilePath = path.join(reportsDir, excelFileName);
+//     await workbook.xlsx.writeFile(excelFilePath);
+
+//     // =========================== PDF Report ===========================
+//     // =========================== PDF Report ===========================
+//     const pdfFileName = `attendance_${institutionId}_${formattedDate}.pdf`;
+//     const pdfFilePath = path.join(reportsDir, pdfFileName);
+
+//     await new Promise((resolve, reject) => {
+//       const doc = new PDFDocument({
+//         margin: 30,
+//         size: 'A3',
+//         layout: 'landscape',
+//       });
+
+//       const stream = fs.createWriteStream(pdfFilePath);
+//       doc.pipe(stream);
+
+//       // Header function (redraws on each page)
+//       const drawHeader = () => {
+//         doc.fontSize(14).font('Helvetica-Bold').text(institution.name, { align: 'center' });
+//         doc.fontSize(10).text(`Attendance Report - ${formattedDate}`, { align: 'center' });
+//         doc.moveDown(1.5);
+
+//         const tableTop = doc.y;
+//         const rowHeight = 20;
+//         const left = 50;
+//         const colWidths = [120, 220, 120, 120, 120, 120, 300];
+//         const headers = ['Employee No', 'Name', 'Check-In', 'Check-Out', 'Late By', 'Status', 'Remarks'];
+
+//         let x = left;
+//         headers.forEach((header, i) => {
+//           doc.rect(x, tableTop, colWidths[i], rowHeight)
+//             .fill('#8B4513')
+//             .stroke()
+//             .fillColor('white')
+//             .font('Helvetica-Bold')
+//             .fontSize(10)
+//             .text(header, x + 5, tableTop + 5, { width: colWidths[i] - 10, align: 'center' });
+//           x += colWidths[i];
+//         });
+
+//         doc.fillColor('black');
+//         return tableTop + rowHeight;
+//       };
+
+//       const rowHeight = 20;
+//       const left = 50;
+//       const bottomMargin = 100;
+//       const colWidths = [120, 220, 120, 120, 120, 120, 300];
+
+//       let y = drawHeader();
+
+//       users.forEach((user, index) => {
+//         const att = user.attendance[0] || {};
+//         const row = [
+//           `${institution.shortName?.toUpperCase() || "ORG"}-${user.employeeNo}`,
+//           user.name?.toUpperCase() || "",
+//           att.firstCheckIn ? moment(att.firstCheckIn).tz('Asia/Kolkata').format('HH:mm') : '',
+//           att.lastCheckOut ? moment(att.lastCheckOut).tz('Asia/Kolkata').format('HH:mm') : '',
+//           user.lateBy || '',
+//           user.status || '',
+//           ''
+//         ];
+
+//         // Check for page break
+//         if (y + rowHeight > doc.page.height - bottomMargin) {
+//           // Legend before page break
+//           doc.fontSize(10).text(
+//             "P = Present   A = Absent   PL = Present but Late   PL/HD = Present, Late, Half Day   HD = Half Day   OD = On Duty   L = Leave   H = Holiday   PER = Permission",
+//             left,
+//             y + 10,
+//             { align: 'left' }
+//           );
+
+//           doc.addPage({ size: 'A3', layout: 'landscape', margin: 30 });
+//           y = drawHeader();
+//         }
+
+//         // Draw row
+//         let x = left;
+//         row.forEach((text, i) => {
+//           doc.rect(x, y, colWidths[i], rowHeight).stroke();
+//           doc.fillColor('black').font('Helvetica').fontSize(9);
+//           doc.text(text, x + 5, y + 5, {
+//             width: colWidths[i] - 10,
+//             align: 'center',
+//           });
+//           x += colWidths[i];
+//         });
+
+//         y += rowHeight;
+//       });
+
+//       // Final legend at the end of last page
+//       doc.fontSize(10).text(
+//         "P = Present   A = Absent   PL = Present but Late   PL/HD = Present, Late, Half Day   HD = Half Day   OD = On Duty   L = Leave   H = Holiday   PER = Permission",
+//         left,
+//         y + 15,
+//         { align: 'left' }
+//       );
+
+//       doc.end();
+//       stream.on('finish', resolve);
+//       stream.on('error', reject);
+//     });
+
+
+//     // ✅ Response
+//     res.json({
+//       success: true,
+//       message: `Attendance for ${formattedDate} fetched successfully`,
+//       excelDownload: `/reports/${excelFileName}`,
+//       pdfDownload: `/reports/${pdfFileName}`,
+//     });
+
+//   } catch (error) {
+//     console.error("Error fetching attendance:", error);
+//     res.status(500).json({ success: false, message: "Error fetching attendance" });
+//   }
+// }
+
+// previous working code
+// export async function getUsersWithDailyAttendance(req, res) {
+//   try {
+//     const { institutionId } = req.params;
+//     const { date, startTime, endTime } = req.query;
+//     const { models, institution } = req.institutionDb;
+
+//     const targetDate = date && !isNaN(new Date(date).getTime()) ? new Date(date) : new Date();
+//     const formattedDate = targetDate.toISOString().split("T")[0];
+
+//     // -------------------- REPORTS DIR --------------------
+//     const reportsDir = path.join(process.cwd(), "public", "reports");
+//     if (!fs.existsSync(reportsDir)) fs.mkdirSync(reportsDir, { recursive: true });
+
+// Commented out block skipped...
+
+//     // -------------------- DATE RANGE --------------------
+//     let startOfDay, endOfDay;
+//     if (startTime && endTime) {
+//       const dateStr = targetDate.toISOString().split("T")[0];
+//       startOfDay = new Date(`${dateStr}T${startTime}`);
+//       endOfDay = new Date(`${dateStr}T${endTime}`);
+//     } else {
+//       startOfDay = new Date(targetDate);
+//       startOfDay.setHours(0, 0, 0, 0);
+
+//       endOfDay = new Date(targetDate);
+//       endOfDay.setHours(23, 59, 59, 999);
+//     }
+
+//     // -------------------- CHECKOUT RULE --------------------
+//     const now = moment().tz("Asia/Kolkata");
+//     const isToday =
+//       moment(targetDate).format("YYYY-MM-DD") === now.format("YYYY-MM-DD");
+//     const beforeOnePM = now.hour() < 13;
+
+//     const shouldHideCheckout = isToday && beforeOnePM;
+
+//     // -------------------- FETCH USERS + ATTENDANCE --------------------
+//     let users = await models.User.aggregate([
+//       {
+//         $lookup: {
+//           from: "attendances",
+//           let: { empNo: "$employeeNo" },
+//           pipeline: [
+//             {
+//               $match: {
+//                 $expr: { $eq: ["$employeeNo", "$$empNo"] },
+//                 timestamp: { $gte: startOfDay, $lte: endOfDay },
+//               },
+//             },
+//             {
+//               $group: {
+//                 _id: null,
+//                 firstCheckIn: { $min: "$timestamp" },
+//                 lastCheckOut: { $max: "$timestamp" },
+//               },
+//             },
+//             { $project: { _id: 0, firstCheckIn: 1, lastCheckOut: 1 } },
+//           ],
+//           as: "attendance",
+//         },
+//       },
+//       { $sort: { seniorityNo: 1 } },
+//     ]);
+
+//     // -------------------- ADD ON DUTY FLAG --------------------
+//     try {
+//       const OnDuty = models.OnDuty;
+
+//       if (OnDuty) {
+//         const onDutyRecords = await OnDuty.find({
+//           institutionId,
+//           $and: [
+//             { startDate: { $lte: endOfDay } },
+//             { endDate: { $gte: startOfDay } }
+//           ]
+//         }).lean();
+
+//         const onDutyMap = {};
+//         onDutyRecords.forEach(d => (onDutyMap[d.employeeNo] = d));
+
+//         users = users.map(user => {
+//           const duty = onDutyMap[user.employeeNo];
+//           if (duty) {
+//             return {
+//               ...user,
+//               onDuty: true,
+//               onDutyDescription: duty.description,
+//               status: "On Duty",
+//             };
+//           }
+//           return user;
+//         });
+
+//         // Add missing on-duty users
+//         for (const employeeNo in onDutyMap) {
+//           if (!users.some(u => u.employeeNo === employeeNo)) {
+//             const dbUser = await models.User.findOne({ employeeNo }).lean();
+//             if (dbUser) {
+//               users.push({
+//                 ...dbUser,
+//                 attendance: [],
+//                 onDuty: true,
+//                 onDutyDescription: onDutyMap[employeeNo].description,
+//                 status: "On Duty",
+//                 lateBy: "",
+//               });
+//             }
+//           }
+//         }
+//       }
+//     } catch (err) {
+//       console.error("Error fetching OnDuty:", err);
+//     }
+
+//     // -------------------- ATTENDANCE STATUS LOGIC --------------------
+//     const { lateUsers, absentees } = calculateAttendanceStatus(users, targetDate, shouldHideCheckout);
+
+//     // -------------------- EXPORT --------------------
+//     const mainExcel = await createAttendanceExcel(users, `${institution.name} - Attendance Report`, mainExcelName, reportsDir, formattedDate, institution, shouldHideCheckout, true);
+//     const mainPDF = await createAttendancePDF(users, `${institution.name} - Attendance Report`, mainPDFName, reportsDir, formattedDate, institution, shouldHideCheckout, true);
+
+//     const filteredLateUsers = lateUsers.filter(u => !u.onDuty);
+//     let lateExcel = null, latePDF = null;
+//     if (filteredLateUsers.length > 0) {
+//       lateExcel = await createAttendanceExcel(filteredLateUsers, `${institution.name} - Late Employees`, `late_${institutionId}_${formattedDate}.xlsx`, reportsDir, formattedDate, institution, shouldHideCheckout, false);
+//       latePDF = await createAttendancePDF(filteredLateUsers, `${institution.name} - Late Employees`, `late_${institutionId}_${formattedDate}.pdf`, reportsDir, formattedDate, institution, shouldHideCheckout, false);
+//     }
+
+//     const filteredAbsentees = absentees.filter(u => !u.onDuty);
+//     let absentExcel = null, absentPDF = null;
+//     if (filteredAbsentees.length > 0) {
+//       absentExcel = await createAttendanceExcel(filteredAbsentees, `${institution.name} - Absentees`, `absent_${institutionId}_${formattedDate}.xlsx`, reportsDir, formattedDate, institution, shouldHideCheckout, false);
+//       absentPDF = await createAttendancePDF(filteredAbsentees, `${institution.name} - Absentees`, `absent_${institutionId}_${formattedDate}.pdf`, reportsDir, formattedDate, institution, shouldHideCheckout, false);
+//     }
+
+//     res.json({
+//       success: true,
+//       message: `Attendance for ${formattedDate} fetched successfully`,
+//       excelDownload: `/reports/${path.basename(mainExcel)}`,
+//       pdfDownload: `/reports/${path.basename(mainPDF)}`,
+//       lateExcelDownload: lateExcel ? `/reports/${path.basename(lateExcel)}` : null,
+//       latePdfDownload: latePDF ? `/reports/${path.basename(latePDF)}` : null,
+//       absentExcelDownload: absentExcel ? `/reports/${path.basename(absentExcel)}` : null,
+//       absentPdfDownload: absentPDF ? `/reports/${path.basename(absentPDF)}` : null,
+//     });
+
+//   } catch (error) {
+//     console.error("Attendance API Error:", error);
+//     res.status(500).json({ success: false, message: "Error fetching attendance" });
+//   }
+// }
+
+// ✅ Get daily attendance (all users, for simplified consumption)
+export async function getUsersWithDailyAttendance(req, res) {
+  req.query.limit = 1000;
+  return getUsersWithDailyAttendanceList(req, res);
+}
+
+// ✅ Get daily attendance list (paginated, with reports)
+export async function getUsersWithDailyAttendanceList(req, res) {
+  try {
+    const { institutionId } = req.params;
+    const {
+      date,
+      page = 1,
+      limit = 10,
+      search = "",
+      employeeNo = "",
+      generateReports = "false"
+    } = req.query;
+
+    const { models, institution } = req.institutionDb;
+
+    const pageNum = Number(page);
+    const limitNum = Number(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    /* -------------------- DATE HANDLING -------------------- */
+    const targetMoment = date
+      ? moment.tz(date, "Asia/Kolkata")
+      : moment().tz("Asia/Kolkata");
+
+    const startOfDay = targetMoment.clone().startOf("day").toDate();
+    const endOfDay = targetMoment.clone().endOf("day").toDate();
+    const formattedDate = targetMoment.format("YYYY-MM-DD");
+
+    const isBeforeOnePM =
+      moment().tz("Asia/Kolkata").hour() < 13 &&
+      targetMoment.isSame(moment().tz("Asia/Kolkata"), "day");
+
+    /* -------------------- SEARCH FILTER -------------------- */
+    const matchConditions = {};
+    if (search) matchConditions.name = { $regex: search, $options: "i" };
+    if (employeeNo)
+      matchConditions.employeeNo = { $regex: employeeNo, $options: "i" };
+
+    /* -------------------- LATE TIME -------------------- */
+    const lateAfter = moment
+      .tz(`${formattedDate} 09:30`, "Asia/Kolkata")
+      .toDate();
+
+    /* -------------------- OPTIMIZED QUERY APPROACH -------------------- */
+    // Instead of $lookup from users to attendance (N+1 problem),
+    // we fetch attendance first (already filtered by date), then merge with users
+
+    // Step 1: Fetch attendance data grouped by employeeNo for the target date
+    const attendanceData = await models.Attendance.aggregate([
+      {
+        $match: {
+          timestamp: { $gte: startOfDay, $lte: endOfDay }
+        }
+      },
+      {
+        $group: {
+          _id: "$employeeNo",
+          firstCheckIn: { $min: "$timestamp" },
+          lastCheckOut: { $max: "$timestamp" },
+          punchCount: { $sum: 1 }
+        }
+      },
+      {
+        $project: {
+          firstCheckIn: 1,
+          // Only show lastCheckOut when there are multiple punches AND times differ
+          lastCheckOut: {
+            $cond: [
+              { $and: [
+                { $gt: ["$punchCount", 1] },
+                { $ne: ["$firstCheckIn", "$lastCheckOut"] }
+              ]},
+              "$lastCheckOut",
+              null
+            ]
+          }
+        }
+      }
+    ]);
+
+    // Step 2: Fetch on-duty records for the target date
+    console.log(`[DEBUG CONTROLLER] Date: ${date} | Start: ${startOfDay.toISOString()} | End: ${endOfDay.toISOString()}`);
+
+    const onDutyRecords = await models.OnDuty.find({
+      institutionId,
+      startDate: { $lte: endOfDay },
+      endDate: { $gte: startOfDay }
+    }).lean();
+
+    // Step 2.1: Fetch Leave records for the target date (with buffer)
+    const leaveRecords = await models.Leave.find({
+      institutionId,
+      status: "approved",
+      leaveDate: {
+        $gte: moment(startOfDay).subtract(12, 'hours').toDate(),
+        $lte: moment(endOfDay).add(12, 'hours').toDate()
+      }
+    }).lean();
+
+    console.log(`[CONTROLLER] Leave Query: ${moment(startOfDay).subtract(1, 'minute').toDate().toISOString()} - ${moment(endOfDay).add(1, 'minute').toDate().toISOString()}`);
+    console.log(`[CONTROLLER] Leaves Found: ${leaveRecords.length}`);
+
+    // Create lookup maps
+    const attendanceMap = {};
+    attendanceData.forEach(att => {
+      attendanceMap[att._id] = {
+        firstCheckIn: att.firstCheckIn,
+        lastCheckOut: att.lastCheckOut
+      };
+    });
+
+    const onDutyMap = {};
+    onDutyRecords.forEach(od => {
+      onDutyMap[od.employeeNo] = true;
+    });
+
+    const leaveMap = {};
+    leaveRecords.forEach(l => {
+      leaveMap[l.employeeNo] = l.type;
+    });
+
+    // Step 3: Fetch users with search/filter and pagination
+    const userQuery = { ...matchConditions };
+
+    const [users, totalUsers] = await Promise.all([
+      models.User.find(userQuery)
+        .sort({ seniorityNo: 1 })
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
+      models.User.countDocuments(userQuery)
+    ]);
+
+    const totalPages = Math.ceil(totalUsers / limitNum);
+
+    // Step 4: Merge attendance and on-duty data with users
+    const responseUsers = users.map(user => {
+      const att = attendanceMap[user.employeeNo];
+      const isOnDuty = !!onDutyMap[user.employeeNo];
+
+      let status = "A"; // Default: Absent
+      let firstCheckIn = null;
+      let lastCheckOut = null;
+
+      if (isOnDuty) {
+        status = "OD";
+      } else if (leaveMap[user.employeeNo]) {
+        const lType = leaveMap[user.employeeNo];
+        status = (lType === 'maternity') ? "MTL" : "L";
+      } else if (att) {
+
+        firstCheckIn = att.firstCheckIn;
+        lastCheckOut = att.lastCheckOut;
+
+        // Check if late
+        if (firstCheckIn > lateAfter) {
+          status = "L";
+        } else {
+          status = "P";
+        }
+      }
+
+      return {
+        ...user,
+        firstCheckIn,
+        lastCheckOut,
+        isOnDuty,
+        status,
+        checkIn: firstCheckIn
+          ? moment(firstCheckIn).tz("Asia/Kolkata").format("HH:mm")
+          : "",
+        checkOut:
+          isBeforeOnePM || !lastCheckOut
+            ? ""
+            : moment(lastCheckOut).tz("Asia/Kolkata").format("HH:mm"),
+        imageUrl: user.faceImageUrl || user.faceImageHikUrl || ""
+      };
+    });
+
+    /* -------------------- GENERATE REPORTS -------------------- */
+    const reportsDir = path.join(process.cwd(), "public", "reports");
+    if (!fs.existsSync(reportsDir)) {
+      fs.mkdirSync(reportsDir, { recursive: true });
+    }
+
+    // Fetch all users (not paginated) for reports
+    const allUsers = await models.User.find(matchConditions)
+      .sort({ seniorityNo: 1 })
+      .lean();
+
+    const formattedAll = allUsers.map(user => {
+      const att = attendanceMap[user.employeeNo];
+      const isOnDuty = !!onDutyMap[user.employeeNo];
+
+      let firstCheckIn = null;
+      let lastCheckOut = null;
+      let status = "A"; // Default: Absent
+      let lateBy = "";
+      let leaveStatus = null;
+      const leaveType = leaveMap[user.employeeNo];
+
+      if (leaveType) {
+        leaveStatus = (leaveType.includes('maternity')) ? "MTL" : "L";
+      } else if (user.employeeNo.includes('033')) {
+        // Fallback for 033: Only apply if date is within maternity range (Jan 7, 2026 - July 7, 2026)
+        const reportDate = moment(formattedDate, "YYYY-MM-DD");
+        const startMaternity = moment("2026-01-07", "YYYY-MM-DD");
+        const endMaternity = moment("2026-07-07", "YYYY-MM-DD");
+        
+        if (reportDate.isBetween(startMaternity, endMaternity, 'day', '[]')) {
+             leaveStatus = "MTL";
+        }
+      }
+
+      if (isOnDuty) {
+        status = "OD";
+      } else if (leaveStatus) {
+        status = leaveStatus;
+      } else if (att) {
+        firstCheckIn = att.firstCheckIn;
+        lastCheckOut = att.lastCheckOut;
+
+        // Calculate status
+        if (firstCheckIn > lateAfter) {
+          status = "L";
+          // Calculate "Late By" in minutes
+          const workingStart = moment.tz(`${formattedDate} 09:00`, "Asia/Kolkata").toDate();
+          const lateMinutes = Math.floor((firstCheckIn - workingStart) / 60000);
+          lateBy = `${lateMinutes} mins`;
+        } else {
+          status = "P";
+        }
+      }
+
+
+      return {
+        ...user,
+        firstCheckIn,
+        lastCheckOut,
+        isOnDuty,
+        status,
+        lateBy,
+        checkIn: firstCheckIn
+          ? moment(firstCheckIn).tz("Asia/Kolkata").format("HH:mm")
+          : "",
+        checkOut:
+          isBeforeOnePM || !lastCheckOut
+            ? ""
+            : moment(lastCheckOut).tz("Asia/Kolkata").format("HH:mm")
+      };
+    });
+
+    const title = `${institution.name} - Attendance Report`;
+    const timestamp = Date.now();
+    const base = `attendance_${institutionId}_${formattedDate}_v${timestamp}`;
+    const excelFileName = `${base}.xlsx`;
+    const pdfFileName = `${base}.pdf`;
+
+    await createAttendanceExcel(
+      formattedAll,
+      title,
+      excelFileName,
+      reportsDir,
+      formattedDate,
+      institution,
+      isBeforeOnePM
+    );
+
+    await createAttendancePDF(
+      formattedAll,
+      title,
+      pdfFileName,
+      reportsDir,
+      formattedDate,
+      institution,
+      isBeforeOnePM
+    );
+
+    // Generate late users report (exclude on-duty)
+    const lateUsers = formattedAll.filter(u => u.status === "L" && !u.isOnDuty);
+    let lateExcelFileName = null, latePdfFileName = null;
+
+    if (lateUsers.length > 0) {
+      lateExcelFileName = `late_${institutionId}_${formattedDate}.xlsx`;
+      latePdfFileName = `late_${institutionId}_${formattedDate}.pdf`;
+
+      await createAttendanceExcel(
+        lateUsers,
+        `${institution.name} - Late Employees`,
+        lateExcelFileName,
+        reportsDir,
+        formattedDate,
+        institution,
+        isBeforeOnePM,
+        false // no remarks column
+      );
+
+      await createAttendancePDF(
+        lateUsers,
+        `${institution.name} - Late Employees`,
+        latePdfFileName,
+        reportsDir,
+        formattedDate,
+        institution,
+        isBeforeOnePM,
+        false // no remarks column
+      );
+    }
+
+    // Generate absentees report (exclude on-duty)
+    const absentees = formattedAll.filter(u => u.status === "A" && !u.isOnDuty);
+    let absentExcelFileName = null, absentPdfFileName = null;
+
+    if (absentees.length > 0) {
+      absentExcelFileName = `absent_${institutionId}_${formattedDate}.xlsx`;
+      absentPdfFileName = `absent_${institutionId}_${formattedDate}.pdf`;
+
+      await createAttendanceExcel(
+        absentees,
+        `${institution.name} - Absentees`,
+        absentExcelFileName,
+        reportsDir,
+        formattedDate,
+        institution,
+        isBeforeOnePM,
+        false // no remarks column
+      );
+
+      await createAttendancePDF(
+        absentees,
+        `${institution.name} - Absentees`,
+        absentPdfFileName,
+        reportsDir,
+        formattedDate,
+        institution,
+        isBeforeOnePM,
+        false // no remarks column
+      );
+    }
+
+    /* -------------------- SEND RESPONSE FAST -------------------- */
+    res.json({
+      success: true,
+      date: formattedDate,
+      users: responseUsers,
+      pagination: {
+        total: totalUsers,
+        page: pageNum,
+        limit: limitNum,
+        totalPages
+      },
+      excelDownload: `/reports/${excelFileName}`,
+      pdfDownload: `/reports/${pdfFileName}`,
+      lateExcelDownload: lateExcelFileName ? `/reports/${lateExcelFileName}` : null,
+      latePdfDownload: latePdfFileName ? `/reports/${latePdfFileName}` : null,
+      absentExcelDownload: absentExcelFileName ? `/reports/${absentExcelFileName}` : null,
+      absentPdfDownload: absentPdfFileName ? `/reports/${absentPdfFileName}` : null
+    });
+
+
+
+  } catch (error) {
+    console.error("Attendance API Error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching attendance"
+    });
+  }
+}
+
+
+async function getUsersWithMonthlyAttendanceSummary(req, res) {
+  try {
+    const { institutionId } = req.params;
+    const { month, year } = req.query;
+    // Get institution-specific models
+    const { models } = req.institutionDb;
+
+    if (!month || !year) {
+      return res.status(400).json({ success: false, message: "Month and Year required" });
+    }
+
+    const startDate = moment(`${year}-${month}-01`).startOf('month').toDate();
+    const endDate = moment(startDate).endOf('month').toDate();
+
+    const institution = await Institution.findById(institutionId);
+    if (!institution) {
+      return res.status(404).json({ success: false, message: "Institution not found" });
+    }
+
+    // Use institution-specific User model
+    const users = await models.User.find({ institutionId }).lean();
+
+    // Use institution-specific Attendance model
+    const attendanceAggregate = await models.Attendance.aggregate([
+      {
+        $match: {
+          institutionId: new mongoose.Types.ObjectId(institutionId),
+          timestamp: { $gte: startDate, $lte: endDate },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            employeeNo: "$employeeNo",
+            date: { $dateToString: { format: "%Y-%m-%d", date: "$timestamp" } }
+          },
+          firstCheckIn: { $min: "$timestamp" },
+          lastCheckOut: { $max: "$timestamp" }
+        }
+      }
+    ]);
+
+    // Map attendance by user and date for quick lookup
+    const attendanceMap = {};
+    attendanceAggregate.forEach(a => {
+      if (!attendanceMap[a._id.employeeNo]) attendanceMap[a._id.employeeNo] = {};
+      attendanceMap[a._id.employeeNo][a._id.date] = {
+        firstCheckIn: a.firstCheckIn,
+        lastCheckOut: a.lastCheckOut,
+      };
+    });
+
+    // Mark Sundays and second Saturdays as leave
+    const daysInMonth = moment(startDate).daysInMonth();
+    const sundays = [];
+    const secondSaturdays = [];
+    for (let d = 1; d <= daysInMonth; d++) {
+      const date = moment(`${year}-${month}-${d}`, "YYYY-MM-DD");
+      if (date.day() === 0) sundays.push(date.format("YYYY-MM-DD"));
+      if (date.day() === 6 && d >= 8 && d <= 14) secondSaturdays.push(date.format("YYYY-MM-DD"));
+    }
+
+    // Calculate total working days
+    const totalDaysInMonth = daysInMonth;
+    const totalWeekendDays = sundays.length + secondSaturdays.length;
+    const totalWorkingDays = totalDaysInMonth - totalWeekendDays;
+
+    // Reporting time constants
+    const reportingTime = moment(`${year}-${month}-01 09:00:00`);
+    const noonTime = moment(`${year}-${month}-01 12:00:00`);
+    const halfDayEnd = moment(`${year}-${month}-01 16:30:00`);
+    const today = moment().startOf('day');
+
+    // Prepare summaries
+    const summaries = users.map(user => {
+      let totalPresent = 0, totalAbsent = 0, totalLeave = 0, totalHalfDay = 0, totalLate = 0;
+
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dateStr = moment(`${year}-${month}-${d}`, "YYYY-MM-DD").format("YYYY-MM-DD");
+
+        // Skip future dates beyond today
+        if (moment(dateStr).isAfter(today)) {
+          continue;
+        }
+
+        if (sundays.includes(dateStr) || secondSaturdays.includes(dateStr)) {
+          totalLeave++;
+          continue;
+        }
+        if (user.leaveDays && user.leaveDays.includes(dateStr) && moment(dateStr).isSameOrBefore(today)) {
+          totalLeave++;
+          continue;
+        }
+        const att = attendanceMap[user.employeeNo]?.[dateStr];
+        if (!att) {
+          totalAbsent++;
+          continue;
+        }
+
+        const checkIn = moment(att.firstCheckIn);
+        const checkOut = moment(att.lastCheckOut);
+
+        const isLate = checkIn.isAfter(reportingTime);
+        const isHalfDay = checkIn.isSameOrAfter(noonTime) || checkOut.isSameOrBefore(halfDayEnd);
+
+        if (isLate) totalLate++;
+        if (isHalfDay) totalHalfDay++;
+        if (!isHalfDay && !isLate) totalPresent++;
+        else if (isHalfDay && !isLate) totalHalfDay++;
+      }
+
+      // Convert every 3 late days to 1 half day leave
+      const lateHalfDayLeave = Math.floor(totalLate / 3);
+      totalHalfDay += lateHalfDayLeave;
+
+      return {
+        employeeNo: user.employeeNo,
+        name: user.name,
+        present: totalPresent,
+        absent: totalAbsent,
+        leave: totalLeave,
+        halfDay: totalHalfDay,
+        late: totalLate,
+        totalWorkingDays: totalWorkingDays,
+        statusSummary: `P:${totalPresent} A:${totalAbsent} L:${totalLeave} HD:${totalHalfDay} PL(Late):${totalLate}`,
+      };
+    });
+
+    // Save reports folder
+    const reportsDir = path.join(process.cwd(), "public", "reports");
+    if (!fs.existsSync(reportsDir)) fs.mkdirSync(reportsDir, { recursive: true });
+
+    const reportLabel = `${month}_${year}`;
+    const excelFileName = `monthly_attendance_${institutionId}_${reportLabel}.xlsx`;
+    const excelFilePath = path.join(reportsDir, excelFileName);
+    const pdfFileName = `monthly_attendance_${institutionId}_${reportLabel}.pdf`;
+    const pdfFilePath = path.join(reportsDir, pdfFileName);
+
+    // Excel Report
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Monthly Attendance");
+
+    worksheet.mergeCells("A1:H1");
+    worksheet.getCell("A1").value = `${institution.name} - Monthly Attendance Summary`;
+    worksheet.getCell("A1").font = { size: 14, bold: true };
+    worksheet.getCell("A1").alignment = { horizontal: "center" };
+
+    worksheet.mergeCells("A2:H2");
+    worksheet.getCell("A2").value = `Month: ${month} - Year: ${year}    Total Working Days: ${totalWorkingDays}`;
+    worksheet.getCell("A2").font = { bold: true };
+    worksheet.getCell("A2").alignment = { horizontal: "center" };
+
+    worksheet.addRow(['Employee No', 'Name', 'Present', 'Absent', 'Leave', 'Half Day', 'Late', 'Working Days']).eachCell(cell => {
+      cell.font = { bold: true };
+      cell.alignment = { horizontal: "center" };
+      cell.border = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } };
+    });
+
+    summaries.forEach(sum => {
+      worksheet.addRow([sum.employeeNo, sum.name.toUpperCase(), sum.present, sum.absent, sum.leave, sum.halfDay, sum.late, sum.totalWorkingDays]);
+    });
+
+    await workbook.xlsx.writeFile(excelFilePath);
+
+    // PDF Report
+    await new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ size: 'A3', layout: 'landscape', margin: 30 });
+      const stream = fs.createWriteStream(pdfFilePath);
+      doc.pipe(stream);
+
+      try {
+        const imgPath = path.join(process.cwd(), 'public', 'logo.png');
+        if (fs.existsSync(imgPath)) {
+          const logo = fs.readFileSync(imgPath);
+          const imgWidth = 70;
+          const imgHeight = 70;
+          doc.image(logo, (doc.page.width - imgWidth) / 2, 30, { width: imgWidth, height: imgHeight });
+          doc.moveDown(6);
+        }
+      } catch { }
+
+      doc.fontSize(14).font('Helvetica-Bold').text(`${institution.name} - Monthly Attendance Summary`, { align: 'center' });
+      doc.fontSize(12).text(`Month: ${month} - Year: ${year}`, { align: 'center' });
+      doc.fontSize(12).text(`Total Working Days: ${totalWorkingDays}`, { align: 'center' });
+      doc.moveDown();
+
+      const headers = ['Employee No', 'Name', 'Present', 'Absent', 'Leave', 'Half Day', 'Late', 'Working Days'];
+      const colWidths = [120, 250, 80, 80, 80, 80, 80, 100];
+      const rowHeight = 20;
+      let x = 50; let y = 180;
+      const bottomMargin = 70;
+
+      // Draw headers
+      headers.forEach((header, idx) => {
+        doc.rect(x, y, colWidths[idx], rowHeight).fill('#8B4513').stroke();
+        doc.fillColor('white').text(header, x + 5, y + 5, { width: colWidths[idx] - 10, align: 'center' });
+        x += colWidths[idx];
+      });
+
+      y += rowHeight;
+      doc.fillColor('black');
+
+      // Draw rows
+      summaries.forEach(sum => {
+        if (y + rowHeight > doc.page.height - bottomMargin) {
+          doc.addPage();
+          y = 50;
+          x = 50;
+          headers.forEach((header, idx) => {
+            doc.rect(x, y, colWidths[idx], rowHeight).fill('#8B4513').stroke();
+            doc.fillColor('white').text(header, x + 5, y + 5, { width: colWidths[idx] - 10, align: 'center' });
+            x += colWidths[idx];
+          });
+          y += rowHeight;
+          doc.fillColor('black');
+        }
+        x = 50;
+        [
+          sum.employeeNo,
+          sum.name.toUpperCase(),
+          sum.present,
+          sum.absent,
+          sum.leave,
+          sum.halfDay,
+          sum.late,
+          sum.totalWorkingDays
+        ].forEach((text, idx) => {
+          doc.rect(x, y, colWidths[idx], rowHeight).stroke();
+          doc.text(String(text), x + 5, y + 5, { width: colWidths[idx] - 10, align: 'center' });
+          x += colWidths[idx];
+        });
+        y += rowHeight;
+      });
+
+      // Legend
+      doc.fontSize(10).text(
+        "P = Present   A = Absent   PL = Present but Late   PL/HD = Present, Late Half Day   HD = Half Day   OD = On Duty   L = Leave   H = Holiday   PER = Permission",
+        50, y + 15, { align: 'left' }
+      );
+
+      doc.end();
+      stream.on('finish', resolve);
+      stream.on('error', reject);
+    });
+
+    res.json({
+      success: true,
+      month,
+      year,
+      excelDownload: `/reports/${excelFileName}`,
+      pdfDownload: `/reports/${pdfFileName}`,
+      summaries
+    });
+  } catch (error) {
+    console.error("Monthly attendance summary error:", error);
+    res.status(500).json({ success: false, message: "Failed to generate monthly attendance summary" });
+  }
+}
+
+
+
+export async function getUsersWithMonthlyDailyStatusSummary(req, res) {
+  try {
+    const { month, year } = req.query;
+    const { institutionId } = req.params;
+    const { models, institution } = req.institutionDb;
+
+    if (!month || !year) {
+      return res.status(400).json({ success: false, message: "Month and Year required" });
+    }
+
+    // ✅ Ensure month and year are numbers
+    const monthNum = Number(month);
+    const yearNum = Number(year);
+
+    // ✅ Use strict ISO parsing
+    const startDate = moment(`${yearNum}-${String(monthNum).padStart(2, "0")}-01`, "YYYY-MM-DD").startOf("month").toDate();
+    const endDate = moment(startDate).endOf("month").toDate();
+
+    // ✅ Fetch all users
+    const users = await models.User.find({}).lean();
+
+    // ✅ Fetch attendance for the month
+    const attendanceAggregate = await models.Attendance.aggregate([
+      { $match: { timestamp: { $gte: startDate, $lte: endDate } } },
+      {
+        $group: {
+          _id: {
+            employeeNo: "$employeeNo",
+            date: { $dateToString: { format: "%Y-%m-%d", date: "$timestamp" } },
+          },
+          firstCheckIn: { $min: "$timestamp" },
+          lastCheckOut: { $max: "$timestamp" },
+        },
+      },
+    ]);
+
+    // ✅ Fetch On Duty records for the month
+    const onDutyRecords = await models.OnDuty.find({
+      $or: [
+        { startDate: { $gte: startDate, $lte: endDate } },
+        { endDate: { $gte: startDate, $lte: endDate } },
+        {
+          $and: [
+            { startDate: { $lte: startDate } },
+            { endDate: { $gte: endDate } }
+          ]
+        }
+      ]
+    }).lean();
+
+    // ✅ Create On Duty lookup map
+    const onDutyMap = {};
+    onDutyRecords.forEach(record => {
+      const start = new Date(Math.max(record.startDate, startDate));
+      const end = new Date(Math.min(record.endDate, endDate));
+
+      // For each day in the On Duty period
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const dateStr = d.toISOString().split('T')[0];
+        if (!onDutyMap[record.employeeNo]) {
+          onDutyMap[record.employeeNo] = {};
+        }
+        onDutyMap[record.employeeNo][dateStr] = {
+          description: record.description
+        };
+      }
+    });
+
+    // ✅ Create attendance lookup
+    const attendanceMap = {};
+    attendanceAggregate.forEach((a) => {
+      if (!attendanceMap[a._id.employeeNo]) attendanceMap[a._id.employeeNo] = {};
+      attendanceMap[a._id.employeeNo][a._id.date] = {
+        firstCheckIn: a.firstCheckIn,
+        lastCheckOut: a.lastCheckOut,
+      };
+    });
+
+    // ✅ Calculate weekends
+    const daysInMonth = moment(startDate).daysInMonth();
+    const sundays = [];
+    const secondSaturdays = [];
+
+    for (let d = 1; d <= daysInMonth; d++) {
+      const date = new Date(yearNum, monthNum - 1, d);
+      const dayOfWeek = date.getDay();
+      const formatted = date.toISOString().split("T")[0];
+
+      if (dayOfWeek === 0) sundays.push(formatted);
+      if (dayOfWeek === 6 && d >= 8 && d <= 14) secondSaturdays.push(formatted);
+    }
+
+    const totalWeekendDays = sundays.length + secondSaturdays.length;
+    const totalWorkingDays = daysInMonth - totalWeekendDays;
+
+    const today = moment().tz("Asia/Kolkata").startOf("day");
+
+    // ====== Cache Check ======
+    const reportsDir = path.join(process.cwd(), "public", "reports");
+    if (!fs.existsSync(reportsDir)) fs.mkdirSync(reportsDir, { recursive: true });
+
+    const monthLabel = moment(startDate).format("YYYY-MM");
+    const cachedPdfName = `monthly_daily_status_${institutionId}_${monthLabel}.pdf`;
+    const cachedExcelName = `monthly_daily_status_${institutionId}_${monthLabel}.xlsx`;
+    const cachedPdfPath = path.join(reportsDir, cachedPdfName);
+    const cachedExcelPath = path.join(reportsDir, cachedExcelName);
+
+    if (fs.existsSync(cachedPdfPath) && fs.existsSync(cachedExcelPath)) {
+      return res.json({
+        success: true,
+        message: `Monthly daily summary for ${monthLabel} (cached)`,
+        excelDownload: `/reports/${cachedExcelName}`,
+        pdfDownload: `/reports/${cachedPdfName}`, // Fixed path in original response if needed
+        month: monthNum,
+        year: yearNum
+      });
+    }
+
+    // ✅ Fetch Holidays & Leaves
+    let holidays = [];
+    let leaveRecords = [];
+    try {
+      if (models.Holiday) {
+        holidays = await models.Holiday.find({
+          institutionId,
+          isActive: true,
+          $and: [
+            { endDate: { $gte: startDate } },
+            { startDate: { $lte: endDate } }
+          ]
+        }).lean();
+      }
+      if (models.Leave) {
+        leaveRecords = await models.Leave.find({
+          institutionId,
+          status: "approved",
+          leaveDate: { $gte: startDate, $lte: endDate }
+        }).lean();
+      }
+    } catch (err) {
+      console.error("Error fetching holidays/leaves for summary:", err);
+    }
+
+    const holidayDates = new Set();
+    holidays.forEach(h => {
+      let curr = moment(h.startDate).startOf("day");
+      const hEnd = moment(h.endDate).startOf("day");
+      while (curr.isSameOrBefore(hEnd)) {
+        if (curr.isSameOrAfter(moment(startDate)) && curr.isSameOrBefore(moment(endDate))) {
+          holidayDates.add(curr.format("YYYY-MM-DD"));
+        }
+        curr.add(1, "day");
+      }
+    });
+
+    const userLeavesMap = {};
+    leaveRecords.forEach(l => {
+      const dateStr = moment(l.leaveDate).format("YYYY-MM-DD");
+      if (!userLeavesMap[l.employeeNo]) userLeavesMap[l.employeeNo] = {};
+      userLeavesMap[l.employeeNo][dateStr] = l.type;
+    });
+
+    // ✅ Calculate weekends (already calculated above)
+    // daysInMonth, sundays, secondSaturdays are already declared
+    // totalWeekendDays and totalWorkingDays are already declared
+
+    const reportingTimeStr = "09:00:00";
+    const halfDayStartStr = "12:00:00";
+    const halfDayEndStr = "16:30:00";
+
+    // ✅ Generate summaries
+    const summaries = users.map((user) => {
+      let totalPresent = 0,
+        totalAbsent = 0,
+        totalLeave = 0,
+        totalHalfDay = 0,
+        totalLate = 0;
+      let dailyStatus = {};
+
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dateStr = moment(startDate).date(d).format("YYYY-MM-DD");
+        const currentDate = moment(dateStr, "YYYY-MM-DD");
+
+        if (currentDate.isAfter(today)) {
+          dailyStatus[dateStr] = "-";
+          continue;
+        }
+
+        const isMaternityFallback = user.employeeNo.includes('033') && 
+          currentDate.isBetween(moment("2026-01-07", "YYYY-MM-DD"), moment("2026-07-07", "YYYY-MM-DD"), 'day', '[]');
+
+        // Check maternity leave first to prioritize it over weekends/holidays
+        if ((userLeavesMap[user.employeeNo] && userLeavesMap[user.employeeNo][dateStr] === 'maternity') || isMaternityFallback) {
+          dailyStatus[dateStr] = "MTL";
+          totalLeave++;
+          continue;
+        }
+
+        // ✅ Weekends and Institutional Holidays
+        if (sundays.includes(dateStr) || secondSaturdays.includes(dateStr) || holidayDates.has(dateStr)) {
+          dailyStatus[dateStr] = "-";
+          continue;
+        }
+
+        // ✅ Individual Approved Leaves (other than maternity)
+        if (userLeavesMap[user.employeeNo] && userLeavesMap[user.employeeNo][dateStr]) {
+          const lType = userLeavesMap[user.employeeNo][dateStr];
+          dailyStatus[dateStr] = "L";
+          totalLeave++;
+          continue;
+        }
+
+        // Legacy check
+        if (user.leaveDays && user.leaveDays.includes(dateStr)) {
+          dailyStatus[dateStr] = "L";
+          totalLeave++;
+          continue;
+        }
+
+        // Check if user is On Duty for this date
+        if (onDutyMap[user.employeeNo]?.[dateStr]) {
+          dailyStatus[dateStr] = "OD";
+          totalPresent++; // Count On Duty as present
+          continue;
+        }
+
+        const att = attendanceMap[user.employeeNo]?.[dateStr];
+        if (!att) {
+          const isTargetRange = currentDate.isSameOrAfter(moment("2026-04-23", "YYYY-MM-DD")) && 
+            currentDate.isSameOrBefore(moment("2026-05-23", "YYYY-MM-DD"));
+          if (user.employeeNo === '033' || isTargetRange) {
+            dailyStatus[dateStr] = "P";
+            totalPresent++;
+          } else {
+            dailyStatus[dateStr] = "A";
+            totalAbsent++;
+          }
+          continue;
+        }
+
+        // ✅ Determine status based on time
+        const checkIn = moment(att.firstCheckIn);
+        const checkOut = moment(att.lastCheckOut);
+
+        const isLate = checkIn.isAfter(moment(`${dateStr} ${reportingTimeStr}`));
+        const isHalfDay =
+          checkIn.isSameOrAfter(moment(`${dateStr} ${halfDayStartStr}`)) ||
+          checkOut.isSameOrBefore(moment(`${dateStr} ${halfDayEndStr}`));
+
+        if (isHalfDay) totalHalfDay++;
+        if (isLate) totalLate++;
+
+        if (isLate && isHalfDay) {
+          dailyStatus[dateStr] = "PL/HD";
+        } else if (isLate) {
+          dailyStatus[dateStr] = "PL"; // ✅ After 09:00
+        } else if (isHalfDay) {
+          dailyStatus[dateStr] = "HD";
+        } else {
+          dailyStatus[dateStr] = "P"; // ✅ Before or equal to 09:00
+        }
+
+        totalPresent++;
+      }
+
+      // ✅ Late to half-day conversion (optional)
+      const lateHalfDayLeave = Math.floor(totalLate / 3);
+      totalHalfDay += lateHalfDayLeave;
+
+      return {
+        employeeNo: user.employeeNo,
+        name: user.name,
+        dailyStatus,
+        totalPresent,
+        totalAbsent,
+        totalLeave,
+        totalHalfDay,
+        totalLate,
+        totalWorkingDays,
+      };
+    });
+
+    // ✅ Reports folder setup (already setup above)
+    // reportsDir is already declared
+    if (!fs.existsSync(reportsDir)) fs.mkdirSync(reportsDir, { recursive: true });
+
+    const label = moment(startDate).format("YYYY-MM");
+    const excelFileName = `monthly_daily_status_${institutionId}_${label}.xlsx`;
+    const excelFilePath = path.join(reportsDir, excelFileName);
+    const pdfFileName = `monthly_daily_status_${institutionId}_${label}.pdf`;
+    const pdfFilePath = path.join(reportsDir, pdfFileName);
+
+    // ✅ Excel generation
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Monthly Daily Status");
+
+    let headers = ["Employee No", "Name"];
+    for (let d = 1; d <= daysInMonth; d++) headers.push(d.toString());
+    headers.push("P", "A", "L", "HD", "LT", "OD", "WD");
+    worksheet.addRow(headers);
+
+    // Add styling to the header row
+    worksheet.getRow(1).eachCell((cell) => {
+      cell.font = { bold: true };
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: '8B4513' }
+      };
+      cell.font = { color: { argb: 'FFFFFF' } };
+      cell.alignment = { horizontal: 'center' };
+    });
+
+    // Count total On Duty days for each user
+    summaries.forEach((user) => {
+      let totalOnDuty = 0;
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dateStr = `${yearNum}-${String(monthNum).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+        if (user.dailyStatus[dateStr] === "OD") {
+          totalOnDuty++;
+        }
+      }
+      user.totalOnDuty = totalOnDuty;
+    });
+
+    summaries.forEach((user, index) => {
+      const empId = `${institution.shortName?.toUpperCase() || ""}-${user.employeeNo}`;
+      let row = [empId, user.name];
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dateStr = `${yearNum}-${String(monthNum).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+        row.push(user.dailyStatus[dateStr] || "-");
+      }
+      row.push(user.totalPresent, user.totalAbsent, user.totalLeave, user.totalHalfDay, user.totalLate, user.totalOnDuty, user.totalWorkingDays);
+
+      const excelRow = worksheet.addRow(row);
+
+      // Add alternating row colors
+      if (index % 2 === 1) {
+        excelRow.eachCell((cell) => {
+          cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'F8F8F8' }
+          };
+        });
+      }
+
+      // Highlight OD cells with a different color
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dateStr = `${yearNum}-${String(monthNum).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+        if (user.dailyStatus[dateStr] === "OD") {
+          const cell = excelRow.getCell(d + 2); // +2 because first two columns are emp no and name
+          cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'CCFFCC' } // Light green for On Duty
+          };
+        }
+      }
+    });
+
+    await workbook.xlsx.writeFile(excelFilePath);
+
+    // ✅ PDF generation
+    await new Promise((resolve, reject) => {
+      const PDFColWidth = 45,
+        PDFColWidthEmp = 120,
+        PDFColWidthName = 200,
+        PDFColWidthT = 25;
+      const doc = new PDFDocument({ size: "A3", layout: "landscape", margin: 30 });
+      const stream = fs.createWriteStream(pdfFilePath);
+      doc.pipe(stream);
+
+      doc.fontSize(14).font("Helvetica-Bold").text(`${institution.name} - Monthly Daily Attendance Status`, { align: "center" });
+      doc.fontSize(12).text(`Month: ${monthNum} - Year: ${yearNum}`, { align: "center" });
+      doc.fontSize(12).text(`Total Working Days: ${totalWorkingDays}`, { align: "center" });
+
+      let daysPerPage = 14,
+        y = 120,
+        left = 30,
+        rowHeight = 20;
+
+      // Add color coding for OD cells
+      const colorCodes = {
+        "OD": "#CCFFCC" // Light green for On Duty
+      };
+
+      for (let pageStart = 1; pageStart <= daysInMonth; pageStart += daysPerPage) {
+        if (pageStart !== 1) {
+          doc.addPage();
+          y = 50;
+        }
+
+        const pageEnd = Math.min(pageStart + daysPerPage - 1, daysInMonth);
+        const head = ["Employee No", "Name"];
+        for (let d = pageStart; d <= pageEnd; d++) head.push(d.toString());
+        head.push("P", "A", "L", "HD", "LT", "OD", "WD");
+
+        const colWidths = [
+          PDFColWidthEmp,
+          PDFColWidthName,
+          ...Array(pageEnd - pageStart + 1).fill(PDFColWidth),
+          ...Array(7).fill(PDFColWidthT),
+        ];
+
+        let x = left;
+        head.forEach((h, i) => {
+          doc.rect(x, y, colWidths[i], rowHeight).fill("#8B4513").stroke();
+          doc.fillColor("white").text(h, x + 2, y + 6, { width: colWidths[i] - 4, align: "center" });
+          x += colWidths[i];
+        });
+        y += rowHeight;
+        doc.fillColor("black");
+
+        summaries.forEach((user) => {
+          x = left;
+          const empId = `${institution.shortName?.toUpperCase() || ""}-${user.employeeNo}`;
+          const row = [empId, user.name];
+          for (let d = pageStart; d <= pageEnd; d++) {
+            const dateStr = `${yearNum}-${String(monthNum).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+            row.push(user.dailyStatus[dateStr] || "-");
+          }
+          row.push(user.totalPresent, user.totalAbsent, user.totalLeave, user.totalHalfDay, user.totalLate, user.totalOnDuty || 0, user.totalWorkingDays);
+
+          row.forEach((txt, idx) => {
+            // Check if this is a date column with OD status
+            if (idx >= 2 && idx < 2 + (pageEnd - pageStart + 1) && txt === "OD") {
+              // Fill with light green for OD
+              doc.rect(x, y, colWidths[idx], rowHeight).fill(colorCodes["OD"]).stroke();
+            } else {
+              doc.rect(x, y, colWidths[idx], rowHeight).stroke();
+            }
+            doc.text(String(txt), x + 2, y + 6, { width: colWidths[idx] - 4, align: "center" });
+            x += colWidths[idx];
+          });
+          y += rowHeight;
+        });
+      }
+
+      // Add legend at the bottom of the last page
+      doc.addPage();
+      y = 50;
+      doc.fontSize(12).font("Helvetica-Bold").text("Legend:", left, y);
+      y += 30;
+
+      const legendItems = [
+        { code: "P", description: "Present" },
+        { code: "A", description: "Absent" },
+        { code: "L", description: "Leave" },
+        { code: "MTL", description: "Maternity Leave" },
+        { code: "HD", description: "Half Day" },
+        { code: "LT", description: "Late" },
+        { code: "OD", description: "On Duty", color: colorCodes["OD"] },
+        { code: "WD", description: "Working Days" },
+        { code: "-", description: "Not Applicable/Holiday" }
+      ];
+
+      const legendColWidth = 60;
+      const legendDescWidth = 300;
+
+      legendItems.forEach((item, index) => {
+        const rowY = y + (index * 25);
+
+        // Draw background for code cell
+        if (item.color) {
+          doc.rect(left, rowY, legendColWidth, 20).fill(item.color).stroke();
+        } else {
+          doc.rect(left, rowY, legendColWidth, 20).fillAndStroke("#f0f0f0", "#cccccc");
+        }
+
+        // Draw code
+        doc.fillColor("#000000").text(item.code, left + 5, rowY + 5, { width: legendColWidth - 10, align: "center" });
+
+        // Draw description
+        doc.text(item.description, left + legendColWidth + 10, rowY + 5, { width: legendDescWidth });
+      });
+
+      // Add note about On Duty
+      y += (legendItems.length * 25) + 20;
+      doc.fontSize(10).font("Helvetica-Oblique").text(
+        "Note: On Duty (OD) status is assigned when faculty members are away on official duties such as conferences, workshops, or other institutional responsibilities. On Duty days are counted as present for attendance calculations.",
+        left, y, { width: 500 }
+      );
+
+      doc.end();
+      stream.on("finish", resolve);
+      stream.on("error", reject);
+    });
+
+    // ✅ Final response
+    res.json({
+      success: true,
+      month: monthNum,
+      year: yearNum,
+      excelDownload: `/reports/${excelFileName}`,
+      pdfDownload: `/reports/${pdfFileName}`,
+      summaries,
+    });
+  } catch (error) {
+    console.error("Error generating monthly daily summary: ", error);
+    res.status(500).json({ success: false, message: "Failed to generate monthly daily summary" });
+  }
+}
+
+
+
+/**
+ * Create a new On Duty record for a user
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ */
+export const createOnDuty = async (req, res) => {
+  try {
+    const { institutionId, userId } = req.params;
+    const { startDate, endDate, description } = req.body;
+    const { models } = req.institutionDb;
+
+    // Validate required fields
+    if (!startDate || !endDate || !description) {
+      return res.status(400).json({ message: "Start date, end date, and description are required" });
+    }
+
+    // Find the user to get employeeNo
+    const user = await models.User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Create the On Duty record
+    const onDuty = await models.OnDuty.create({
+      institutionId,
+      userId,
+      employeeNo: user.employeeNo,
+      startDate: new Date(startDate),
+      endDate: new Date(endDate),
+      description
+    });
+
+    res.status(201).json(onDuty);
+  } catch (err) {
+    console.error("Error creating On Duty record:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/**
+ * Get all On Duty records for a user
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ */
+export const getUserOnDuty = async (req, res) => {
+  try {
+    const { institutionId, userId } = req.params;
+    const { models } = req.institutionDb;
+
+    const onDutyRecords = await models.OnDuty.find({
+      institutionId,
+      userId
+    }).sort({ startDate: -1 });
+
+    res.json(onDutyRecords);
+  } catch (err) {
+    console.error("Error fetching On Duty records:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/**
+ * Get all On Duty records for an institution
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ */
+export const getInstitutionOnDuty = async (req, res) => {
+  try {
+    const { institutionId } = req.params;
+    const { startDate, endDate } = req.query;
+    const { models } = req.institutionDb;
+
+    // Build query
+    const query = { institutionId };
+
+    // Add date filters if provided
+    if (startDate && endDate) {
+      query.$or = [
+        { startDate: { $gte: new Date(startDate), $lte: new Date(endDate) } },
+        { endDate: { $gte: new Date(startDate), $lte: new Date(endDate) } },
+        {
+          $and: [
+            { startDate: { $lte: new Date(startDate) } },
+            { endDate: { $gte: new Date(endDate) } }
+          ]
+        }
+      ];
+    }
+
+    // Fetch records and populate user details
+    const onDutyRecords = await models.OnDuty.find(query)
+      .sort({ startDate: -1 })
+      .lean();
+
+    // Get user details for each record
+    const userIds = [...new Set(onDutyRecords.map(record => record.userId))];
+    const users = await models.User.find({
+      _id: { $in: userIds }
+    }).select('name employeeNo').lean();
+
+    // Create a map for quick lookup
+    const userMap = {};
+    users.forEach(user => {
+      userMap[user._id.toString()] = user;
+    });
+
+    // Add user details to each record
+    const recordsWithUserDetails = onDutyRecords.map(record => ({
+      ...record,
+      userName: userMap[record.userId.toString()]?.name || 'Unknown',
+      employeeNo: userMap[record.userId.toString()]?.employeeNo || record.employeeNo
+    }));
+
+    res.json(recordsWithUserDetails);
+  } catch (err) {
+    console.error("Error fetching institution On Duty records:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/**
+ * Update an On Duty record
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ */
+export const updateOnDuty = async (req, res) => {
+  try {
+    const { institutionId, onDutyId } = req.params;
+    const { startDate, endDate, description } = req.body;
+    const { models } = req.institutionDb;
+
+    // Find and update the record
+    const updatedRecord = await models.OnDuty.findOneAndUpdate(
+      { _id: onDutyId, institutionId },
+      {
+        ...(startDate && { startDate: new Date(startDate) }),
+        ...(endDate && { endDate: new Date(endDate) }),
+        ...(description && { description }),
+        updatedAt: new Date()
+      },
+      { new: true }
+    );
+
+    if (!updatedRecord) {
+      return res.status(404).json({ message: "On Duty record not found" });
+    }
+
+    res.json(updatedRecord);
+  } catch (err) {
+    console.error("Error updating On Duty record:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/**
+ * Delete an On Duty record
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ */
+export const deleteOnDuty = async (req, res) => {
+  try {
+    const { institutionId, onDutyId } = req.params;
+    const { models } = req.institutionDb;
+
+    const result = await models.OnDuty.findOneAndDelete({
+      _id: onDutyId,
+      institutionId
+    });
+
+    if (!result) {
+      return res.status(404).json({ message: "On Duty record not found" });
+    }
+
+    res.json({ message: "On Duty record deleted successfully" });
+  } catch (err) {
+    console.error("Error deleting On Duty record:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/**
+ * Sync face images from Hikvision device and update user records
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ */
+export const syncFaceImages = async (req, res) => {
+  try {
+    const { institutionId } = req.params;
+    const { models } = req.institutionDb;
+
+    // Fetch the device for this institution
+    const device = await models.Device.findOne({ institutionId });
+    if (!device) {
+      return res.status(404).json({ message: 'Device not found for this institution' });
+    }
+
+    // Debug: Check User model schema
+    console.log('User model schema paths:', Object.keys(models.User.schema.paths));
+
+    const { ip, port, username, password } = device;
+    const useDigestAuth = true;
+    console.log(`Starting face image sync from Hikvision device at ${ip}:${port || 33001}`);
+
+    // Fetch all faces from the device
+    const faces = await fetchAllFaces({
+      ipAddress: ip,
+      port: port || 33001,
+      username: username || 'admin',
+      password: password || 'admin12345',
+      useDigestAuth
+    });
+
+    console.log(`Fetched ${faces.length} faces from Hikvision device`);
+
+    const results = {
+      total: faces.length,
+      processed: 0,
+      updated: 0,
+      errors: 0,
+      details: []
+    };
+
+    for (const face of faces) {
+      try {
+        results.processed++;
+        const employeeNo = face.FPID;
+        if (!employeeNo) {
+          results.details.push({ status: 'skipped', reason: 'No FPID found' });
+          continue;
+        }
+
+        // Handle padded and non-padded employee numbers
+        const numericEmpNo = parseInt(employeeNo, 10).toString();
+        const regex = new RegExp(`^0*${numericEmpNo}$`);
+
+        // Find matching user
+        const user = await models.User.findOne({
+          institutionId,
+          $or: [
+            { employeeNo: employeeNo },
+            { employeeNo: numericEmpNo },
+            { employeeNo: { $regex: regex } }
+          ]
+        });
+
+        if (!user || !user._id) {
+          results.details.push({ employeeNo, status: 'skipped', reason: 'User not found or _id missing' });
+          continue;
+        }
+
+        const imageUrl = face.faceURL;
+        if (!imageUrl) {
+          results.details.push({ employeeNo, status: 'skipped', reason: 'No face URL found' });
+          continue;
+        }
+
+        // Download face image locally
+        const localImagePath = await downloadFaceImage(imageUrl, employeeNo, {
+          username,
+          password,
+          useDigestAuth
+        });
+
+        // Update the user document in DB
+        console.log(`Updating user ${employeeNo} with face image URL: ${localImagePath}`);
+        const updateData = {
+          faceImageUrl: localImagePath,
+          faceImageHikUrl: imageUrl,
+          fpid: employeeNo
+        };
+        console.log('Update data:', updateData);
+
+        const updatedUser = await models.User.findByIdAndUpdate(
+          user._id,
+          updateData,
+          { new: true, useFindAndModify: false, runValidators: true }
+        );
+
+        // Verify update by querying again
+        const verifyUser = await models.User.findById(user._id);
+        console.log('Verified user after update:', verifyUser);
+
+        if (updatedUser) {
+          results.updated++;
+          results.details.push({
+            employeeNo,
+            name: updatedUser.name,
+            status: 'updated',
+            imageUrl: localImagePath
+          });
+          console.log(`Updated user:`, updatedUser);
+        } else {
+          results.errors++;
+          results.details.push({
+            employeeNo,
+            status: 'error',
+            error: 'Update returned null'
+          });
+        }
+      } catch (err) {
+        results.errors++;
+        results.details.push({
+          employeeNo: face.FPID,
+          status: 'error',
+          error: err.message
+        });
+        console.error(`Error updating user for employee ${face.FPID}:`, err);
+      }
+    }
+
+    res.json({
+      message: `Face image sync completed. Updated ${results.updated} of ${results.total} faces.`,
+      results
+    });
+  } catch (err) {
+    console.error('Error syncing face images:', err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// Utility to download face image
+export async function downloadFaceImages(imageUrl, employeeNo, authOptions = {}) {
+  try {
+    const dirPath = path.resolve('public/faces');
+    if (!fs.existsSync(dirPath)) fs.mkdirSync(dirPath, { recursive: true });
+
+    const filename = `${employeeNo}.jpg`;
+    const filePath = path.join(dirPath, filename);
+
+    const { username = '', password = '', useDigestAuth = false } = authOptions;
+
+    const client = new DigestFetch(username, password, { algorithm: 'MD5' });
+    const response = await client.fetch(imageUrl, { timeout: 30000 });
+
+    if (!response.ok) throw new Error(`Failed to download image: ${response.status} ${response.statusText}`);
+
+    await streamPipeline(response.body, fs.createWriteStream(filePath));
+    console.log(`Face image saved to ${filePath}`);
+
+    return `/faces/${filename}`;
+  } catch (error) {
+    console.error(`Error downloading face image for employee ${employeeNo}:`, error);
+    throw error;
+  }
+}
+// End of daily attendance functions
+
+
+export default {
+  addUser,
+  listUsers,
+  createDeviceUser,
+  importUsersFromDevice,
+  pushUserToDevice,
+  getUsersWithCurrentMonthAttendance,
+  getUsersWithDailyAttendance,
+  getUsersWithMonthlyAttendanceSummary,
+  getUsersWithMonthlyDailyStatusSummary,
+  syncFaceImages,
+  getUsersForDropdown,
+  getUsersWithDailyAttendanceList
+};

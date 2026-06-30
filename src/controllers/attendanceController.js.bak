@@ -1,0 +1,634 @@
+import Device from '../models/Device.js';
+import Attendance from '../models/Attendance.js';
+import { fetchEvents, createHikvisionClient } from '../services/hikvisionService.js';
+import { buildAttendanceWorkbook } from '../services/excelService.js';
+import fs from 'fs';
+import path from 'path';
+import mongoose from 'mongoose';
+import ExcelJS from 'exceljs';
+import moment from 'moment';
+
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// export async function syncFromDevice(req, res) {
+//   const { institutionId } = req.params;
+//   const { deviceId, startTime, endTime } = req.body;
+
+//   try {
+//     const device = await Device.findById(deviceId);
+//     console.log('====================================');
+//     console.log(device);
+//     console.log('====================================');
+//     if (!device) return res.status(404).json({ message: 'Device not found' });
+
+//     const events = await fetchEvents(device, startTime, endTime);
+//     const recorded = [];
+//     const list = events?.AcsEvent?.AcsEventInfo || [];
+//     for (const ev of list) {
+//       const a = await Attendance.create({
+//         institutionId,
+//         deviceId,
+//         employeeNo: ev?.employeeNo || 'unknown',
+//         eventType: ev?.eventType || 'unknown',
+//         timestamp: new Date(ev?.time || Date.now()),
+//         raw: ev
+//       });
+//       recorded.push(a);
+//     }
+
+//     res.json({ recordedCount: recorded.length });
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ message: err.message });
+//   }
+// }
+
+export async function syncFromDevice(req, res) {
+  const { institutionId } = req.params;
+  let { deviceId, startTime, endTime } = req.body;
+
+  if (!mongoose.Types.ObjectId.isValid(deviceId)) {
+    return res.status(400).json({ message: 'Invalid or missing deviceId' });
+  }
+
+  try {
+    // Use institution-specific database models
+    const { models } = req.institutionDb;
+
+    console.log(`Starting sync for device ${deviceId} in institution ${institutionId}`);
+
+    const device = await models.Device.findById(deviceId);
+    if (!device) {
+      return res.status(404).json({ message: 'Device not found' });
+    }
+
+    // --- Incremental Sync Logic ---
+    // Find the latest attendance record for this device
+    const latestRecord = await models.Attendance.findOne({ institutionId, deviceId })
+      .sort({ timestamp: -1 })
+      .select('timestamp');
+
+    if (latestRecord && latestRecord.timestamp) {
+      const latestTime = moment(latestRecord.timestamp);
+      const requestedStart = moment(startTime);
+
+      // If the latest record is after the requested start time, use the latest record time + 1 second
+      if (latestTime.isAfter(requestedStart)) {
+        startTime = latestTime.add(1, 'seconds').format('YYYY-MM-DDTHH:mm:ss');
+        console.log(`Found existing records. Updating startTime to ${startTime} for incremental sync.`);
+      }
+    }
+    // -----------------------------
+
+    // Create a single client instance to reuse authentication session
+    let client = createHikvisionClient(device);
+
+    let allEvents = [];
+    let position = 0;
+    const maxResults = 30; // Device limit is 30
+    let hasMore = true;
+    let consecutiveErrors = 0;
+
+    while (hasMore) {
+      console.log(`Fetching events from position ${position}...`);
+
+      try {
+        const response = await fetchEvents(device, startTime, endTime, position, maxResults, client);
+        const acsEvent = response?.AcsEvent;
+
+        // Reset error count on success
+        consecutiveErrors = 0;
+
+        if (!acsEvent) break;
+
+        const events = acsEvent.InfoList || [];
+        allEvents = allEvents.concat(events);
+
+        position += events.length;
+        hasMore = acsEvent.responseStatusStrg === "MORE";
+
+        // Safety break to prevent infinite loops if device keeps returning MORE but no data
+        if (events.length === 0 && hasMore) {
+          console.warn("Device returned MORE but no events, stopping loop.");
+          break;
+        }
+
+        // Add a small delay to avoid overwhelming the device (rate limiting)
+        if (hasMore) {
+          await sleep(50); // Reduced to 50ms for faster sync
+        }
+      } catch (error) {
+        // Check if it's a recoverable error (Auth, Network, Socket)
+        const isRecoverable =
+          error.message.includes('401') ||
+          error.message.includes('Unauthorized') ||
+          error.message.includes('fetch failed') ||
+          error.message.includes('SocketError') ||
+          error.message.includes('ECONNRESET') ||
+          error.message.includes('ETIMEDOUT') ||
+          (error.cause && (
+            error.cause.code === 'UND_ERR_SOCKET' ||
+            error.cause.code === 'ECONNRESET' ||
+            error.cause.code === 'ETIMEDOUT'
+          ));
+
+        if (isRecoverable) {
+          consecutiveErrors++;
+          if (consecutiveErrors > 10) {
+            console.error("Too many consecutive errors, aborting sync.");
+            break;
+          }
+
+          console.warn(`Recoverable error at position ${position}: ${error.message}. Refreshing session and retrying in 2s...`);
+          // Recreate client to get a fresh session/nonce
+          client = createHikvisionClient(device);
+          await sleep(2000);
+          continue; // Retry the same position
+        } else {
+          console.error(`Error fetching events at position ${position}:`, error.message);
+          throw error;
+        }
+      }
+    }
+
+    console.log(`Fetched total ${allEvents.length} events. Processing...`);
+
+    // Save to institution-specific DB
+    const recorded = [];
+    for (const ev of allEvents) {
+      // Create timestamp from event time
+      const timestamp = new Date(ev.time);
+
+      // Adjust check-in time if it's after 9:00 AM
+      // Only adjust if this is a check-in event (typically major-minor codes indicate event type)
+      const isCheckIn = ev.minor === "1" || ev.minor === "75"; // Adjust these codes based on your system's event types
+
+      if (isCheckIn && timestamp.getHours() >= 9) {
+        // Set to a random time between 8:30 AM and 8:50 AM
+        const randomMinute = Math.floor(Math.random() * 21) + 30; // Random minute between 30 and 50
+        timestamp.setHours(8, randomMinute, 0);
+        console.log(`Adjusted check-in time for ${ev.employeeNoString || 'unknown'} from ${new Date(ev.time).toTimeString()} to ${timestamp.toTimeString()}`);
+      }
+
+      const a = await models.Attendance.create({
+        institutionId,
+        deviceId,
+        employeeNo: ev.employeeNoString || 'unknown',
+        eventType: `${ev.major}-${ev.minor}`,
+        timestamp: timestamp,
+        raw: ev
+      });
+      recorded.push(a);
+    }
+
+    console.log(`Sync completed successfully. Recorded ${recorded.length} new entries.`);
+
+    res.json({
+      status: "success",
+      message: "Sync completed successfully",
+      recordedCount: recorded.length
+    });
+
+  } catch (err) {
+    console.error('Error syncing from device:', err);
+    res.status(500).json({ message: err.message });
+  }
+}
+
+export async function exportAttendanceExcel(req, res) {
+  const { institutionId } = req.params;
+  const { from, to } = req.query;
+
+  try {
+    // Use institution-specific database models
+    const { models } = req.institutionDb;
+
+    const qry = { institutionId };
+    if (from || to) qry.timestamp = {};
+    if (from) qry.timestamp.$gte = new Date(from);
+    if (to) qry.timestamp.$lte = new Date(to);
+
+    // Query from institution-specific database
+    const records = await models.Attendance.find(qry).lean();
+
+    // Get On Duty records for the same period
+    const onDutyQuery = { institutionId };
+    if (from || to) {
+      if (from) {
+        onDutyQuery.endDate = { $gte: new Date(from) };
+      }
+      if (to) {
+        onDutyQuery.startDate = { $lte: new Date(to) };
+      }
+    }
+
+    // Get the OnDuty model from the institution database
+    const OnDuty = models.OnDuty;
+    let onDutyRecords = [];
+
+    if (OnDuty) {
+      try {
+        onDutyRecords = await OnDuty.find(onDutyQuery).lean();
+        console.log(`Found ${onDutyRecords.length} On Duty records for the period`);
+      } catch (onDutyErr) {
+        console.error('Error fetching On Duty records:', onDutyErr);
+        // Continue without On Duty records if there's an error
+      }
+    }
+
+    // Generate Excel buffer with attendance and on-duty records
+    const buffer = await buildAttendanceWorkbook(records, onDutyRecords);
+
+    // Create a temporary filename
+    const fileName = `attendance_${institutionId}_${Date.now()}.xlsx`;
+    const filePath = path.join('public', 'downloads', fileName); // Make sure folder exists
+
+    // Ensure the directory exists
+    const dir = path.join('public', 'downloads');
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    // Save file to server
+    fs.writeFileSync(filePath, buffer);
+
+    // Send a downloadable link
+    res.json({
+      success: true,
+      message: 'Excel generated successfully',
+      downloadUrl: `/ downloads / ${fileName} `,
+      onDutyRecordsIncluded: onDutyRecords.length
+    });
+  } catch (err) {
+    console.error('Error exporting attendance Excel:', err);
+    res.status(500).json({ message: err.message });
+  }
+}
+
+// export async function exportAttendanceExcel(req, res) {
+//   const { institutionId } = req.params;
+//   const { from, to } = req.query;
+
+//   const qry = { institutionId };
+//   if (from || to) qry.timestamp = {};
+//   if (from) qry.timestamp.$gte = new Date(from);
+//   if (to) qry.timestamp.$lte = new Date(to);
+
+//   const records = await Attendance.find(qry).lean();
+
+//   const buffer = await buildAttendanceWorkbook(records);
+
+//   res.setHeader(
+//     'Content-Disposition',
+//     `attachment; filename = attendance_${ institutionId }_${ Date.now() }.xlsx`
+//   );
+//   res.setHeader(
+//     'Content-Type',
+//     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+//   );
+
+//   res.send(buffer);
+// }
+
+/**
+ * Upload manual attendance records from Excel file to mark absent users as present
+ * @param {Object} req - Express request object with file
+ * @param {Object} res - Express response object
+ * @returns {Object} - JSON response with upload results
+ */
+export const uploadManualAttendanceExcel = async (req, res) => {
+  try {
+    const { institutionId } = req.params;
+    const { models } = req.institutionDb;
+    const User = models.User;
+    const Attendance = models.Attendance;
+
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: "No file provided" });
+    }
+
+    const filePath = req.file.path;
+    console.log("📘 Reading Manual Attendance Excel:", filePath);
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(filePath);
+
+    const worksheet = workbook.worksheets[0];
+    const totalRows = worksheet.rowCount;
+    console.log("📄 Total Rows Found:", totalRows);
+
+    // === REQUIRED HEADERS ===
+    const requiredHeaders = ["EmployeeNo", "Date", "InTime", "OutTime", "Reason"];
+    const optionalHeaders = ["AttendanceType"];
+    const headers = worksheet.getRow(1).values;
+    // Note: headers[0] is empty
+
+    const missingHeaders = requiredHeaders.filter((h) => !headers.includes(h));
+    if (missingHeaders.length > 0) {
+      fs.unlinkSync(filePath);
+      return res.status(400).json({
+        success: false,
+        message: `Missing required columns: ${missingHeaders.join(", ")} `,
+      });
+    }
+
+    // === HEADER INDEXES ===
+    const employeeNoIdx = headers.indexOf("EmployeeNo");
+    const dateIdx = headers.indexOf("Date");
+    const inTimeIdx = headers.indexOf("InTime");
+    const outTimeIdx = headers.indexOf("OutTime");
+    const reasonIdx = headers.indexOf("Reason");
+    const attendanceTypeIdx = headers.indexOf("AttendanceType"); // Optional column
+
+    // === HELPERS ===
+    const getCellTextOrDate = (cell) => {
+      if (!cell || cell.value === undefined || cell.value === null) return "";
+
+      if (cell.type === ExcelJS.ValueType.Date) {
+        // Excel true date type
+        return moment(cell.value).format("YYYY-MM-DD");
+      } else if (typeof cell.value === "number") {
+        // Excel serial date number (e.g. 45940)
+        const dateFromSerial = new Date(Math.round((cell.value - 25569) * 86400 * 1000));
+        return moment(dateFromSerial).format("YYYY-MM-DD");
+      } else if (typeof cell.value === "string") {
+        return cell.value.trim();
+      } else if (cell.text) {
+        return cell.text.trim();
+      }
+
+      return "";
+    };
+
+    const getTimeFromCell = (cell) => {
+      if (!cell || cell.value === undefined || cell.value === null) return "";
+
+      let timeStr = "";
+      if (cell.type === ExcelJS.ValueType.Date) {
+        timeStr = moment(cell.value).format("HH:mm:ss");
+      } else if (typeof cell.value === "string") {
+        timeStr = cell.value.trim();
+      } else if (cell.text) {
+        timeStr = cell.text.trim();
+      }
+
+      return timeStr;
+    };
+
+    const results = {
+      success: 0,
+      failed: 0,
+      errors: [],
+    };
+
+    const bulkPromises = [];
+
+    // === PROCESS EACH ROW ===
+    worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+      if (rowNumber === 1) return; // Skip header row
+
+      try {
+        const employeeNo = String(row.getCell(employeeNoIdx).text || "").trim();
+        const dateStr = getCellTextOrDate(row.getCell(dateIdx));
+        const inTimeStr = getTimeFromCell(row.getCell(inTimeIdx));
+        const outTimeStr = getTimeFromCell(row.getCell(outTimeIdx));
+        const reason = (row.getCell(reasonIdx).text || "").trim();
+
+        // Get attendance type if column exists (default to "FULL" if not specified)
+        let attendanceType = "FULL";
+        if (attendanceTypeIdx > 0) {
+          const typeCell = row.getCell(attendanceTypeIdx);
+          if (typeCell && typeCell.text) {
+            const typeText = typeCell.text.trim().toUpperCase();
+            if (["ML/P", "ML-P", "MLP"].includes(typeText)) {
+              attendanceType = "ML/P"; // Morning Leave / Afternoon Present
+            }
+          }
+        }
+
+        console.log({ rowNumber, employeeNo, dateStr, inTimeStr, outTimeStr, reason, attendanceType });
+
+        // Validate required fields
+        if (!employeeNo) {
+          results.failed++;
+          results.errors.push(`Row ${rowNumber}: Missing Employee No`);
+          return;
+        }
+
+        if (!dateStr) {
+          results.failed++;
+          results.errors.push(`Row ${rowNumber}: Missing Date for EmployeeNo ${employeeNo}`);
+          return;
+        }
+
+        if (!inTimeStr || !outTimeStr) {
+          results.failed++;
+          results.errors.push(`Row ${rowNumber}: Missing In Time or Out Time for EmployeeNo ${employeeNo}`);
+          return;
+        }
+
+        // Parse date
+        const date = moment(dateStr, ["YYYY-MM-DD", "DD-MM-YYYY"]).toDate();
+        if (isNaN(date.getTime())) {
+          results.failed++;
+          results.errors.push(
+            `Row ${rowNumber}: Invalid date format for EmployeeNo ${employeeNo}.Use YYYY - MM - DD`
+          );
+          return;
+        }
+
+        // Create in and out timestamps
+        const inTimeParts = inTimeStr.split(':');
+        const outTimeParts = outTimeStr.split(':');
+
+        if (inTimeParts.length < 2 || outTimeParts.length < 2) {
+          results.failed++;
+          results.errors.push(
+            `Row ${rowNumber}: Invalid time format for EmployeeNo ${employeeNo}.Use HH:MM or HH: MM: SS`
+          );
+          return;
+        }
+
+        const inDate = new Date(date);
+        inDate.setHours(parseInt(inTimeParts[0], 10), parseInt(inTimeParts[1], 10), inTimeParts[2] ? parseInt(inTimeParts[2], 10) : 0);
+
+        // Adjust check-in time if it's after 9:00 AM
+        if (parseInt(inTimeParts[0], 10) >= 9) {
+          // Set to a random time between 8:30 AM and 8:50 AM
+          const randomMinute = Math.floor(Math.random() * 21) + 30; // Random minute between 30 and 50
+          inDate.setHours(8, randomMinute, 0);
+          console.log(`Row ${rowNumber}: Adjusted check -in time for ${employeeNo} from ${inTimeStr} to 08:${randomMinute}:00`);
+        }
+
+        const outDate = new Date(date);
+        outDate.setHours(parseInt(outTimeParts[0], 10), parseInt(outTimeParts[1], 10), outTimeParts[2] ? parseInt(outTimeParts[2], 10) : 0);
+
+        // Adjust check-out time if it's before 16:30 (4:30 PM)
+        const fourThirtyPM = new Date(date);
+        fourThirtyPM.setHours(16, 30, 0, 0);
+
+        if (outDate < fourThirtyPM) {
+          // Set to a random time after 16:30
+          const randomMinute = Math.floor(Math.random() * 29) + 31; // Random minute between 31 and 59
+          outDate.setHours(16, randomMinute, 0);
+          console.log(`Row ${rowNumber}: Adjusted check - out time for ${employeeNo} from ${outTimeStr} to 16:${randomMinute}:00`);
+        }
+
+        if (inDate >= outDate) {
+          results.failed++;
+          results.errors.push(
+            `Row ${rowNumber}: In time must be before out time for EmployeeNo ${employeeNo}`
+          );
+          return;
+        }
+
+        // === CREATE ATTENDANCE ENTRIES ===
+        const createPromise = User.findOne({ employeeNo })
+          .then((user) => {
+            if (!user) {
+              results.failed++;
+              results.errors.push(`Row ${rowNumber}: User not found for EmployeeNo ${employeeNo}`);
+              return null;
+            }
+
+            // Create check-in record
+            const checkInPromise = Attendance.create({
+              institutionId,
+              userId: user._id,
+              employeeNo: user.employeeNo,
+              eventType: "manual-check-in",
+              timestamp: inDate,
+              raw: {
+                name: user.name,
+                manualReason: reason,
+                manualEntry: true,
+                attendanceType: attendanceType
+              }
+            });
+
+            // Create check-out record
+            const checkOutPromise = Attendance.create({
+              institutionId,
+              userId: user._id,
+              employeeNo: user.employeeNo,
+              eventType: "manual-check-out",
+              timestamp: outDate,
+              raw: {
+                name: user.name,
+                manualReason: reason,
+                manualEntry: true,
+                attendanceType: attendanceType
+              }
+            });
+
+            return Promise.all([checkInPromise, checkOutPromise])
+              .then(() => {
+                results.success++;
+              })
+              .catch((err) => {
+                results.failed++;
+                results.errors.push(
+                  `Row ${rowNumber}: Failed to create attendance records for ${employeeNo} - ${err.message}`
+                );
+              });
+          })
+          .catch((err) => {
+            results.failed++;
+            results.errors.push(`Row ${rowNumber}: Error finding user ${employeeNo} - ${err.message} `);
+          });
+
+        bulkPromises.push(createPromise);
+      } catch (err) {
+        results.failed++;
+        results.errors.push(`Row ${rowNumber}: ${err.message} `);
+      }
+    });
+
+    await Promise.all(bulkPromises);
+
+    fs.unlinkSync(filePath);
+
+    return res.status(200).json({
+      success: true,
+      message: `Upload completed.${results.success} attendance records created, ${results.failed} failed`,
+      summary: results,
+    });
+  } catch (error) {
+    console.error("❌ Error in uploadManualAttendanceExcel:", error);
+    if (req.file) fs.unlinkSync(req.file.path);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to process uploaded Excel file",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Download manual attendance template Excel file
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ */
+export const downloadManualAttendanceTemplate = async (req, res) => {
+  try {
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Manual Attendance');
+
+    // Add headers
+    const headerRow = worksheet.addRow(['EmployeeNo', 'Date', 'InTime', 'OutTime', 'Reason']);
+    headerRow.eachCell(cell => {
+      cell.font = { bold: true, color: { argb: 'FFFFFF' } };
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: '4F81BD' }
+      };
+      cell.alignment = { horizontal: 'center' };
+    });
+
+    // Add sample rows
+    const today = moment().format('YYYY-MM-DD');
+    worksheet.addRow(['EMP001', today, '09:00:00', '17:00:00', 'Biometric not working']);
+    worksheet.addRow(['EMP002', today, '09:30:00', '17:30:00', 'Forgot to punch']);
+    worksheet.addRow(['EMP003', today, '08:45:00', '16:45:00', 'System error']);
+
+    // Set column widths
+    worksheet.columns = [
+      { width: 15 },
+      { width: 15 },
+      { width: 15 },
+      { width: 15 },
+      { width: 30 }
+    ];
+
+    // Add instructions
+    worksheet.addRow([]);
+    worksheet.addRow(['Instructions:']);
+    worksheet.addRow(['1. EmployeeNo: Faculty/Employee ID (e.g., EMP001)']);
+    worksheet.addRow(['2. Date: Date in YYYY-MM-DD format (e.g., 2025-01-15)']);
+    worksheet.addRow(['3. InTime: Check-in time in HH:MM:SS format (e.g., 09:00:00)']);
+    worksheet.addRow(['4. OutTime: Check-out time in HH:MM:SS format (e.g., 17:00:00)']);
+    worksheet.addRow(['5. Reason: Reason for manual attendance entry']);
+    worksheet.addRow(['6. Do not modify the header row']);
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="Manual_Attendance_Template.xlsx"');
+
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (error) {
+    console.error('Error generating template:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to generate template',
+      error: error.message
+    });
+  }
+};
+
+export default {
+  syncFromDevice,
+  exportAttendanceExcel,
+  uploadManualAttendanceExcel,
+  downloadManualAttendanceTemplate
+};

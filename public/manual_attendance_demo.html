@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manual Attendance Upload Demo</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 {
+            color: #4F81BD;
+            text-align: center;
+        }
+        .container {
+            display: flex;
+            gap: 20px;
+        }
+        .panel {
+            flex: 1;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            padding: 15px;
+            background-color: #f9f9f9;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input, textarea, select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #4F81BD;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #3A5F8E;
+        }
+        .result {
+            margin-top: 20px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 10px;
+            background-color: #fff;
+            min-height: 100px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #4F81BD;
+            color: white;
+        }
+        tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+        .manual-cell {
+            background-color: #E6F0FF;
+        }
+        .loading {
+            text-align: center;
+            color: #666;
+        }
+        .file-upload {
+            margin-top: 20px;
+            padding: 15px;
+            border: 2px dashed #4F81BD;
+            border-radius: 5px;
+            text-align: center;
+        }
+        .file-upload input[type="file"] {
+            display: none;
+        }
+        .file-upload label {
+            display: block;
+            cursor: pointer;
+            padding: 10px;
+            background-color: #E6F0FF;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+        .file-upload label:hover {
+            background-color: #D0E3FF;
+        }
+        .file-name {
+            margin-top: 10px;
+            font-style: italic;
+            color: #666;
+        }
+        .error {
+            color: #D32F2F;
+            font-weight: bold;
+        }
+        .success {
+            color: #388E3C;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1>Manual Attendance Upload Demo</h1>
+    
+    <div class="container">
+        <div class="panel">
+            <h2>Authentication</h2>
+            <div class="form-group">
+                <label for="email">Email:</label>
+                <input type="email" id="email" placeholder="admin@example.com">
+            </div>
+            <div class="form-group">
+                <label for="password">Password:</label>
+                <input type="password" id="password">
+            </div>
+            <div class="form-group">
+                <label for="institution">Institution ID:</label>
+                <input type="text" id="institution">
+            </div>
+            <button id="login-btn">Login</button>
+            <div class="result" id="auth-result">
+                <p class="loading">Not logged in</p>
+            </div>
+        </div>
+        
+        <div class="panel">
+            <h2>Manual Attendance Template</h2>
+            <p>Download the template Excel file to fill in manual attendance records:</p>
+            <button id="template-btn">Download Template</button>
+            
+            <div class="file-upload">
+                <h3>Upload Completed Excel File</h3>
+                <label for="excel-file">Choose Excel File</label>
+                <input type="file" id="excel-file" accept=".xlsx, .xls">
+                <div class="file-name" id="file-name">No file selected</div>
+                <button id="upload-btn" disabled>Upload Attendance Data</button>
+            </div>
+            
+            <div class="result" id="upload-result">
+                <p class="loading">No upload performed yet</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let token = '';
+        let baseUrl = 'http://localhost:3000/api';
+        let institutionId = '';
+        let selectedFile = null;
+        
+        // Helper function for API requests
+        async function apiRequest(method, endpoint, data = null, isFormData = false) {
+            try {
+                const headers = {};
+                
+                if (token) {
+                    headers['Authorization'] = `Bearer ${token}`;
+                }
+                
+                if (!isFormData) {
+                    headers['Content-Type'] = 'application/json';
+                }
+                
+                const options = {
+                    method,
+                    headers
+                };
+                
+                if (data) {
+                    if (isFormData) {
+                        options.body = data;
+                    } else if (method === 'POST' || method === 'PUT') {
+                        options.body = JSON.stringify(data);
+                    }
+                }
+                
+                const response = await fetch(`${baseUrl}${endpoint}`, options);
+                
+                // Handle file download
+                if (response.headers.get('Content-Type').includes('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'Manual_Attendance_Template.xlsx';
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+                    return { success: true, message: 'Template downloaded successfully' };
+                }
+                
+                const result = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(result.message || 'API request failed');
+                }
+                
+                return result;
+            } catch (error) {
+                console.error(`Error in ${method} ${endpoint}:`, error);
+                throw error;
+            }
+        }
+        
+        // Login
+        document.getElementById('login-btn').addEventListener('click', async () => {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            institutionId = document.getElementById('institution').value;
+            
+            if (!email || !password || !institutionId) {
+                alert('Please fill in all authentication fields');
+                return;
+            }
+            
+            const resultDiv = document.getElementById('auth-result');
+            resultDiv.innerHTML = '<p class="loading">Logging in...</p>';
+            
+            try {
+                const data = await apiRequest('POST', '/auth/login', { email, password });
+                token = data.token;
+                resultDiv.innerHTML = '<p class="success">Login successful! Token received.</p>';
+            } catch (error) {
+                resultDiv.innerHTML = `<p class="error">Login failed: ${error.message}</p>`;
+            }
+        });
+        
+        // Download Template
+        document.getElementById('template-btn').addEventListener('click', async () => {
+            try {
+                await apiRequest('GET', `/institutions/${institutionId || 'template'}/manual-attendance-template`);
+            } catch (error) {
+                alert(`Failed to download template: ${error.message}`);
+            }
+        });
+        
+        // Handle file selection
+        document.getElementById('excel-file').addEventListener('change', (event) => {
+            selectedFile = event.target.files[0];
+            
+            if (selectedFile) {
+                document.getElementById('file-name').textContent = selectedFile.name;
+                document.getElementById('upload-btn').disabled = false;
+            } else {
+                document.getElementById('file-name').textContent = 'No file selected';
+                document.getElementById('upload-btn').disabled = true;
+            }
+        });
+        
+        // Upload Excel file
+        document.getElementById('upload-btn').addEventListener('click', async () => {
+            if (!token) {
+                alert('Please login first');
+                return;
+            }
+            
+            if (!selectedFile) {
+                alert('Please select a file to upload');
+                return;
+            }
+            
+            const resultDiv = document.getElementById('upload-result');
+            resultDiv.innerHTML = '<p class="loading">Uploading file...</p>';
+            
+            try {
+                const formData = new FormData();
+                formData.append('file', selectedFile);
+                
+                const data = await apiRequest('POST', `/institutions/${institutionId}/upload-manual-attendance`, formData, true);
+                
+                let resultHtml = `
+                    <p class="success">${data.message}</p>
+                    <p><strong>Success:</strong> ${data.summary.success} records</p>
+                    <p><strong>Failed:</strong> ${data.summary.failed} records</p>
+                `;
+                
+                if (data.summary.errors && data.summary.errors.length > 0) {
+                    resultHtml += '<h4>Errors:</h4><ul>';
+                    data.summary.errors.forEach(error => {
+                        resultHtml += `<li class="error">${error}</li>`;
+                    });
+                    resultHtml += '</ul>';
+                }
+                
+                resultDiv.innerHTML = resultHtml;
+                
+                // Reset file input
+                document.getElementById('excel-file').value = '';
+                document.getElementById('file-name').textContent = 'No file selected';
+                document.getElementById('upload-btn').disabled = true;
+                selectedFile = null;
+                
+            } catch (error) {
+                resultDiv.innerHTML = `<p class="error">Upload failed: ${error.message}</p>`;
+            }
+        });
+    </script>
+</body>
+</html>

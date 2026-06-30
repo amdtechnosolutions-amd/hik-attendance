@@ -1,0 +1,296 @@
+[
+  {
+    "employeeNo": "MNCVV-82",
+    "name": "MEENAKSHI V",
+    "date": "2026-06-06",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-90",
+    "name": "vanaja sm",
+    "date": "2026-06-08",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-92",
+    "name": "NIRMALA S",
+    "date": "2026-06-06",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-95",
+    "name": "JAYANTHI S",
+    "date": "2026-06-18",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-101",
+    "name": "SMT G SUGANTHI",
+    "date": "2026-06-04",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-112",
+    "name": "MALAR VIZHI S",
+    "date": "2026-06-05",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-117",
+    "name": "ATCHAYA",
+    "date": "2026-06-04",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-124",
+    "name": "selvamN",
+    "date": "2026-06-04",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-001",
+    "name": "S.SUJATHA DOLLY",
+    "date": "2026-06-02",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-001",
+    "name": "S.SUJATHA DOLLY",
+    "date": "2026-06-05",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-001",
+    "name": "S.SUJATHA DOLLY",
+    "date": "2026-06-06",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-001",
+    "name": "S.SUJATHA DOLLY",
+    "date": "2026-06-08",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-001",
+    "name": "S.SUJATHA DOLLY",
+    "date": "2026-06-10",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-001",
+    "name": "S.SUJATHA DOLLY",
+    "date": "2026-06-11",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-001",
+    "name": "S.SUJATHA DOLLY",
+    "date": "2026-06-15",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-001",
+    "name": "S.SUJATHA DOLLY",
+    "date": "2026-06-16",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-001",
+    "name": "S.SUJATHA DOLLY",
+    "date": "2026-06-17",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-009",
+    "name": "Smt.Sundari G",
+    "date": "2026-06-06",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-009",
+    "name": "Smt.Sundari G",
+    "date": "2026-06-19",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-013",
+    "name": "Smt.Sankari  E",
+    "date": "2026-06-04",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-013",
+    "name": "Smt.Sankari  E",
+    "date": "2026-06-18",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-017",
+    "name": "Smt C.Abinaya",
+    "date": "2026-06-06",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-022",
+    "name": "Smt. B. Malathi",
+    "date": "2026-06-06",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-023",
+    "name": "Smt T. Girija",
+    "date": "2026-06-05",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-025",
+    "name": "Smt M. Aruna",
+    "date": "2026-06-18",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-026",
+    "name": "Smt S. Santhi",
+    "date": "2026-06-05",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-030",
+    "name": "Smt. N. Mahalakshmi",
+    "date": "2026-06-06",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-032",
+    "name": "Selvi P. Ragaveni",
+    "date": "2026-06-05",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-039",
+    "name": "Selvi. N.Sri Rajaveni",
+    "date": "2026-06-05",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-039",
+    "name": "Selvi. N.Sri Rajaveni",
+    "date": "2026-06-06",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-041",
+    "name": "Smt P.V. Saranya",
+    "date": "2026-06-06",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-041",
+    "name": "Smt P.V. Saranya",
+    "date": "2026-06-19",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-043",
+    "name": "Smt. S.Manjula (Spl. Educator)",
+    "date": "2026-06-06",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-045",
+    "name": "Smt. S..J.Rekha",
+    "date": "2026-06-05",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-046",
+    "name": "Smt. A.Vimala Devi",
+    "date": "2026-06-06",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-053",
+    "name": "Smt. J.Sudha",
+    "date": "2026-06-05",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-060",
+    "name": "Smt. R.Dhanalakshmi",
+    "date": "2026-06-06",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-076",
+    "name": "Smt. Dhanabaggyam R",
+    "date": "2026-06-05",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-077",
+    "name": "Smt. Mangalam C",
+    "date": "2026-06-06",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-078",
+    "name": "Smt. Amudhavalli V",
+    "date": "2026-06-02",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-080",
+    "name": "Smt. Jayalakshmi V",
+    "date": "2026-06-05",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  },
+  {
+    "employeeNo": "MNCVV-081",
+    "name": "Smt R.Nandhini",
+    "date": "2026-06-08",
+    "expected": "PRESENT",
+    "dbStatus": "ABSENT (No Punch)"
+  }
+]

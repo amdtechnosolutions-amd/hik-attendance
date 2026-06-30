@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>On Duty Management Demo</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 {
+            color: #8B4513;
+            text-align: center;
+        }
+        .container {
+            display: flex;
+            gap: 20px;
+        }
+        .panel {
+            flex: 1;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            padding: 15px;
+            background-color: #f9f9f9;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input, textarea, select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #8B4513;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #704214;
+        }
+        .result {
+            margin-top: 20px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 10px;
+            background-color: #fff;
+            min-height: 100px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #8B4513;
+            color: white;
+        }
+        tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+        .od-cell {
+            background-color: #CCFFCC;
+        }
+        .loading {
+            text-align: center;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <h1>On Duty Management Demo</h1>
+    
+    <div class="container">
+        <div class="panel">
+            <h2>Authentication</h2>
+            <div class="form-group">
+                <label for="email">Email:</label>
+                <input type="email" id="email" placeholder="admin@example.com">
+            </div>
+            <div class="form-group">
+                <label for="password">Password:</label>
+                <input type="password" id="password">
+            </div>
+            <div class="form-group">
+                <label for="institution">Institution ID:</label>
+                <input type="text" id="institution">
+            </div>
+            <button id="login-btn">Login</button>
+            <div class="result" id="auth-result">
+                <p class="loading">Not logged in</p>
+            </div>
+        </div>
+        
+        <div class="panel">
+            <h2>Create On Duty Record</h2>
+            <div class="form-group">
+                <label for="user">User ID:</label>
+                <input type="text" id="user">
+            </div>
+            <div class="form-group">
+                <label for="start-date">Start Date:</label>
+                <input type="date" id="start-date">
+            </div>
+            <div class="form-group">
+                <label for="end-date">End Date:</label>
+                <input type="date" id="end-date">
+            </div>
+            <div class="form-group">
+                <label for="description">Description:</label>
+                <textarea id="description" rows="3" placeholder="Reason for On Duty"></textarea>
+            </div>
+            <button id="create-btn">Create On Duty Record</button>
+            <div class="result" id="create-result">
+                <p class="loading">No record created yet</p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="container" style="margin-top: 20px;">
+        <div class="panel">
+            <h2>On Duty Records</h2>
+            <div class="form-group">
+                <label for="filter-start">Filter Start Date:</label>
+                <input type="date" id="filter-start">
+            </div>
+            <div class="form-group">
+                <label for="filter-end">Filter End Date:</label>
+                <input type="date" id="filter-end">
+            </div>
+            <button id="fetch-btn">Fetch Records</button>
+            <div class="result" id="records-result">
+                <p class="loading">No records fetched yet</p>
+            </div>
+        </div>
+        
+        <div class="panel">
+            <h2>Monthly Report</h2>
+            <div class="form-group">
+                <label for="report-month">Month:</label>
+                <select id="report-month">
+                    <option value="1">January</option>
+                    <option value="2">February</option>
+                    <option value="3">March</option>
+                    <option value="4">April</option>
+                    <option value="5">May</option>
+                    <option value="6">June</option>
+                    <option value="7">July</option>
+                    <option value="8">August</option>
+                    <option value="9">September</option>
+                    <option value="10">October</option>
+                    <option value="11">November</option>
+                    <option value="12">December</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="report-year">Year:</label>
+                <input type="number" id="report-year" min="2020" max="2030">
+            </div>
+            <button id="report-btn">Generate Report</button>
+            <div class="result" id="report-result">
+                <p class="loading">No report generated yet</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Set current date values
+        const today = new Date();
+        document.getElementById('start-date').valueAsDate = today;
+        document.getElementById('end-date').valueAsDate = new Date(today.getTime() + 86400000); // tomorrow
+        document.getElementById('filter-start').valueAsDate = new Date(today.getFullYear(), today.getMonth(), 1);
+        document.getElementById('filter-end').valueAsDate = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+        document.getElementById('report-month').value = today.getMonth() + 1;
+        document.getElementById('report-year').value = today.getFullYear();
+        
+        // Global variables
+        let token = '';
+        let baseUrl = 'http://localhost:3000/api';
+        let institutionId = '';
+        
+        // Helper function for API requests
+        async function apiRequest(method, endpoint, data = null) {
+            try {
+                const headers = {
+                    'Content-Type': 'application/json'
+                };
+                
+                if (token) {
+                    headers['Authorization'] = `Bearer ${token}`;
+                }
+                
+                const options = {
+                    method,
+                    headers
+                };
+                
+                if (data && (method === 'POST' || method === 'PUT')) {
+                    options.body = JSON.stringify(data);
+                }
+                
+                const response = await fetch(`${baseUrl}${endpoint}`, options);
+                const result = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(result.message || 'API request failed');
+                }
+                
+                return result;
+            } catch (error) {
+                console.error(`Error in ${method} ${endpoint}:`, error);
+                throw error;
+            }
+        }
+        
+        // Login
+        document.getElementById('login-btn').addEventListener('click', async () => {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            institutionId = document.getElementById('institution').value;
+            
+            if (!email || !password || !institutionId) {
+                alert('Please fill in all authentication fields');
+                return;
+            }
+            
+            const resultDiv = document.getElementById('auth-result');
+            resultDiv.innerHTML = '<p class="loading">Logging in...</p>';
+            
+            try {
+                const data = await apiRequest('POST', '/auth/login', { email, password });
+                token = data.token;
+                resultDiv.innerHTML = '<p>Login successful! Token received.</p>';
+            } catch (error) {
+                resultDiv.innerHTML = `<p style="color: red">Login failed: ${error.message}</p>`;
+            }
+        });
+        
+        // Create On Duty Record
+        document.getElementById('create-btn').addEventListener('click', async () => {
+            if (!token) {
+                alert('Please login first');
+                return;
+            }
+            
+            const userId = document.getElementById('user').value;
+            const startDate = document.getElementById('start-date').value;
+            const endDate = document.getElementById('end-date').value;
+            const description = document.getElementById('description').value;
+            
+            if (!userId || !startDate || !endDate || !description) {
+                alert('Please fill in all On Duty record fields');
+                return;
+            }
+            
+            const resultDiv = document.getElementById('create-result');
+            resultDiv.innerHTML = '<p class="loading">Creating record...</p>';
+            
+            try {
+                const data = await apiRequest('POST', `/institutions/${institutionId}/users/${userId}/on-duty`, {
+                    startDate: new Date(startDate).toISOString(),
+                    endDate: new Date(endDate).toISOString(),
+                    description
+                });
+                
+                resultDiv.innerHTML = `
+                    <p>On Duty record created successfully!</p>
+                    <p><strong>ID:</strong> ${data._id}</p>
+                    <p><strong>Start Date:</strong> ${new Date(data.startDate).toLocaleDateString()}</p>
+                    <p><strong>End Date:</strong> ${new Date(data.endDate).toLocaleDateString()}</p>
+                    <p><strong>Description:</strong> ${data.description}</p>
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `<p style="color: red">Creation failed: ${error.message}</p>`;
+            }
+        });
+        
+        // Fetch Records
+        document.getElementById('fetch-btn').addEventListener('click', async () => {
+            if (!token) {
+                alert('Please login first');
+                return;
+            }
+            
+            const startDate = document.getElementById('filter-start').value;
+            const endDate = document.getElementById('filter-end').value;
+            
+            const resultDiv = document.getElementById('records-result');
+            resultDiv.innerHTML = '<p class="loading">Fetching records...</p>';
+            
+            try {
+                let endpoint = `/institutions/${institutionId}/on-duty`;
+                if (startDate && endDate) {
+                    endpoint += `?startDate=${startDate}&endDate=${endDate}`;
+                }
+                
+                const data = await apiRequest('GET', endpoint);
+                
+                if (data.length === 0) {
+                    resultDiv.innerHTML = '<p>No On Duty records found for the selected period.</p>';
+                    return;
+                }
+                
+                let tableHtml = `
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Employee No</th>
+                                <th>Name</th>
+                                <th>Start Date</th>
+                                <th>End Date</th>
+                                <th>Description</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                `;
+                
+                data.forEach(record => {
+                    tableHtml += `
+                        <tr>
+                            <td>${record.employeeNo}</td>
+                            <td>${record.userName || 'Unknown'}</td>
+                            <td>${new Date(record.startDate).toLocaleDateString()}</td>
+                            <td>${new Date(record.endDate).toLocaleDateString()}</td>
+                            <td>${record.description}</td>
+                        </tr>
+                    `;
+                });
+                
+                tableHtml += `
+                        </tbody>
+                    </table>
+                `;
+                
+                resultDiv.innerHTML = tableHtml;
+            } catch (error) {
+                resultDiv.innerHTML = `<p style="color: red">Fetching records failed: ${error.message}</p>`;
+            }
+        });
+        
+        // Generate Report
+        document.getElementById('report-btn').addEventListener('click', async () => {
+            if (!token) {
+                alert('Please login first');
+                return;
+            }
+            
+            const month = document.getElementById('report-month').value;
+            const year = document.getElementById('report-year').value;
+            
+            const resultDiv = document.getElementById('report-result');
+            resultDiv.innerHTML = '<p class="loading">Generating report...</p>';
+            
+            try {
+                const data = await apiRequest('GET', `/institutions/${institutionId}/monthly-daily-attendance-status?month=${month}&year=${year}`);
+                
+                resultDiv.innerHTML = `
+                    <p>Report generated successfully!</p>
+                    <p><a href="${data.excelDownload}" target="_blank">Download Excel Report</a></p>
+                    <p><a href="${data.pdfDownload}" target="_blank">Download PDF Report</a></p>
+                    <p><strong>Total Records:</strong> ${data.summaries.length}</p>
+                `;
+                
+                // Show a sample of the data
+                if (data.summaries.length > 0) {
+                    let sampleHtml = '<h3>Sample Data:</h3>';
+                    
+                    // Get the first user's data
+                    const user = data.summaries[0];
+                    sampleHtml += `<p><strong>Employee:</strong> ${user.employeeNo} - ${user.name}</p>`;
+                    
+                    // Show status for first 5 days
+                    sampleHtml += '<table style="margin-top: 10px;"><tr><th>Date</th><th>Status</th></tr>';
+                    
+                    let count = 0;
+                    for (const [date, status] of Object.entries(user.dailyStatus)) {
+                        if (count >= 5) break;
+                        
+                        const cellClass = status === 'OD' ? 'class="od-cell"' : '';
+                        sampleHtml += `<tr><td>${date}</td><td ${cellClass}>${status}</td></tr>`;
+                        count++;
+                    }
+                    
+                    sampleHtml += '</table>';
+                    resultDiv.innerHTML += sampleHtml;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<p style="color: red">Report generation failed: ${error.message}</p>`;
+            }
+        });
+    </script>
+</body>
+</html>

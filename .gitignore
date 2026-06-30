@@ -1,0 +1,72 @@
+# Dependencies
+node_modules/
+
+# Environment variables (NEVER commit these)
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pm2-error*.log
+pm2-out*.log
+
+# Database backups & dumps
+db_backup/
+db_backup_*/
+backup_temp/
+
+# Generated reports (PDFs, Excel)
+public/reports/
+reports/
+
+# Uploads
+uploads/
+
+# Test / debug one-off scripts in root
+*.mjs
+adjustAttendanceScript.js
+apply-fix.js
+check*.js
+clear*.js
+default_export.js
+delete*.js
+deleteUsers.js
+fetchAndSaveDecData.js
+find_mahadevi.js
+fixed_exports.js
+fix-monthly-status.js
+generate_report.js
+list*.js
+map_mongo_files.js
+remove-compoff*.mjs
+search_all_march.js
+sync*.js
+test*.js
+update-compoff.mjs
+checkUsers.js
+
+# Temp files
+temp_output.txt
+hikvision_events.log
+*.log
+
+# Excel upload templates (optional — remove if you want to keep)
+# *.xlsx
+
+# Postman collections (optional — remove if you want to keep)
+# *.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Build output
+dist/
+build/

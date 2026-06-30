@@ -1,0 +1,377 @@
+{
+    "info": {
+        "name": "OnDuty API Collection",
+        "_postman_id": "onduty-api-collection",
+        "description": "Complete API collection for OnDuty management endpoints including CRUD operations, Excel upload/download, and bulk delete operations.",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "auth": {
+        "type": "bearer",
+        "bearer": [
+            {
+                "key": "token",
+                "value": "{{authToken}}",
+                "type": "string"
+            }
+        ]
+    },
+    "variable": [
+        {
+            "key": "baseUrl",
+            "value": "http://localhost:3000",
+            "type": "string"
+        },
+        {
+            "key": "institutionId",
+            "value": "your-institution-id",
+            "type": "string"
+        },
+        {
+            "key": "userId",
+            "value": "your-user-id",
+            "type": "string"
+        },
+        {
+            "key": "onDutyId",
+            "value": "your-onduty-id",
+            "type": "string"
+        },
+        {
+            "key": "authToken",
+            "value": "",
+            "type": "string"
+        }
+    ],
+    "item": [
+        {
+            "name": "Authentication",
+            "item": [
+                {
+                    "name": "Login",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "if (pm.response.code === 200) {",
+                                    "    const response = pm.response.json();",
+                                    "    if (response.token) {",
+                                    "        pm.collectionVariables.set('authToken', response.token);",
+                                    "        console.log('Auth token saved:', response.token);",
+                                    "    }",
+                                    "}"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"email\": \"admin@example.com\",\n  \"password\": \"your-password\"\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/auth/login",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "auth",
+                                "login"
+                            ]
+                        },
+                        "description": "Login to get authentication token. The token will be automatically saved to collection variables."
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "OnDuty - CRUD Operations",
+            "item": [
+                {
+                    "name": "Create OnDuty Record",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"employeeNo\": \"EMP001\",\n  \"startDate\": \"2024-01-15\",\n  \"endDate\": \"2024-01-15\",\n  \"description\": \"Official meeting at district office\"\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/institutions/{{institutionId}}/users/{{userId}}/on-duty",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "institutions",
+                                "{{institutionId}}",
+                                "users",
+                                "{{userId}}",
+                                "on-duty"
+                            ]
+                        },
+                        "description": "Create a new OnDuty record for a specific user. Requires authentication."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Get User OnDuty Records",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/institutions/{{institutionId}}/users/{{userId}}/on-duty",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "institutions",
+                                "{{institutionId}}",
+                                "users",
+                                "{{userId}}",
+                                "on-duty"
+                            ]
+                        },
+                        "description": "Get all OnDuty records for a specific user, sorted by start date (descending)."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Get Institution OnDuty Records",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/institutions/{{institutionId}}/on-duty",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "institutions",
+                                "{{institutionId}}",
+                                "on-duty"
+                            ]
+                        },
+                        "description": "Get all OnDuty records for an institution. Returns records with populated user details (name, employeeNo)."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Get Institution OnDuty Records (Filtered by Date)",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/institutions/{{institutionId}}/on-duty?startDate=2024-01-01&endDate=2024-01-31",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "institutions",
+                                "{{institutionId}}",
+                                "on-duty"
+                            ],
+                            "query": [
+                                {
+                                    "key": "startDate",
+                                    "value": "2024-01-01",
+                                    "description": "Filter records starting from this date"
+                                },
+                                {
+                                    "key": "endDate",
+                                    "value": "2024-01-31",
+                                    "description": "Filter records ending before this date"
+                                }
+                            ]
+                        },
+                        "description": "Get OnDuty records filtered by date range. Both startDate and endDate are optional."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Update OnDuty Record",
+                    "request": {
+                        "method": "PUT",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"startDate\": \"2024-01-16\",\n  \"endDate\": \"2024-01-17\",\n  \"description\": \"Updated: Extended meeting at district office\"\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/institutions/{{institutionId}}/on-duty/{{onDutyId}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "institutions",
+                                "{{institutionId}}",
+                                "on-duty",
+                                "{{onDutyId}}"
+                            ]
+                        },
+                        "description": "Update an existing OnDuty record. All fields are optional. Validates that start date is before or equal to end date."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Delete OnDuty Record",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/institutions/{{institutionId}}/on-duty/{{onDutyId}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "institutions",
+                                "{{institutionId}}",
+                                "on-duty",
+                                "{{onDutyId}}"
+                            ]
+                        },
+                        "description": "Delete a specific OnDuty record by ID."
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "OnDuty - Excel Operations",
+            "item": [
+                {
+                    "name": "Download OnDuty Template",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/institutions/{{institutionId}}/on-duty-template",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "institutions",
+                                "{{institutionId}}",
+                                "on-duty-template"
+                            ]
+                        },
+                        "description": "Download an Excel template for bulk OnDuty upload. The template includes sample data and required columns: EmployeeNo, StartDate, EndDate, Description."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Upload OnDuty Excel",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "formdata",
+                            "formdata": [
+                                {
+                                    "key": "file",
+                                    "type": "file",
+                                    "src": [],
+                                    "description": "Excel file with OnDuty records. Must contain columns: EmployeeNo, StartDate, EndDate, Description"
+                                }
+                            ]
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/institutions/{{institutionId}}/upload-on-duty",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "institutions",
+                                "{{institutionId}}",
+                                "upload-on-duty"
+                            ]
+                        },
+                        "description": "Upload OnDuty records from an Excel file. The file must contain the required columns (EmployeeNo, StartDate, EndDate, Description). Returns a summary of successful and failed records."
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "OnDuty - Bulk Operations",
+            "item": [
+                {
+                    "name": "Delete OnDuty by Date Range",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"startDate\": \"2024-01-01\",\n  \"endDate\": \"2024-01-31\"\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/institutions/{{institutionId}}/delete-on-duty-by-dates",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "institutions",
+                                "{{institutionId}}",
+                                "delete-on-duty-by-dates"
+                            ]
+                        },
+                        "description": "Delete all OnDuty records within a date range. Deletes records that start, end, or span the specified date range."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Delete OnDuty by Date Range and Employees",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"startDate\": \"2024-01-01\",\n  \"endDate\": \"2024-01-31\",\n  \"employeeNos\": [\"EMP001\", \"EMP002\", \"EMP003\"]\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/institutions/{{institutionId}}/delete-on-duty-by-dates",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "institutions",
+                                "{{institutionId}}",
+                                "delete-on-duty-by-dates"
+                            ]
+                        },
+                        "description": "Delete OnDuty records for specific employees within a date range. The employeeNos array is optional - if not provided, all records in the date range will be deleted."
+                    },
+                    "response": []
+                }
+            ]
+        }
+    ]
+}

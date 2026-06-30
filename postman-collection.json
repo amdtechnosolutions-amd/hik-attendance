@@ -1,0 +1,1046 @@
+{
+  "info": {
+    "name": "HIK Attendance - Leave & Permission Management",
+    "description": "API collection for Leave Management (Half-day leaves) and Permission Management (1-hour permissions)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Leave Management",
+      "item": [
+        {
+          "name": "Create Leave Request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"leaveDate\": \"2025-12-15\",\n  \"type\": \"half-day-morning\",\n  \"reason\": \"Medical appointment\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/leaves",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "leaves"
+              ]
+            },
+            "description": "Create a new leave request (half-day-morning or half-day-afternoon)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get All Leave Requests",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/leaves?status=pending&startDate=2025-12-01&endDate=2025-12-31",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "leaves"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "pending",
+                  "disabled": false
+                },
+                {
+                  "key": "userId",
+                  "value": "{{userId}}",
+                  "disabled": true
+                },
+                {
+                  "key": "startDate",
+                  "value": "2025-12-01",
+                  "disabled": true
+                },
+                {
+                  "key": "endDate",
+                  "value": "2025-12-31",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Get all leave requests with optional filters (status, userId, date range)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get User Leave Requests",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/users/{{userId}}/leaves",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "users",
+                "{{userId}}",
+                "leaves"
+              ]
+            },
+            "description": "Get all leave requests for a specific user"
+          },
+          "response": []
+        },
+        {
+          "name": "Approve Leave Request",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"comments\": \"Approved\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/leaves/{{leaveId}}/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "leaves",
+                "{{leaveId}}",
+                "approve"
+              ]
+            },
+            "description": "Approve a leave request"
+          },
+          "response": []
+        },
+        {
+          "name": "Reject Leave Request",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"comments\": \"Insufficient notice period\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/leaves/{{leaveId}}/reject",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "leaves",
+                "{{leaveId}}",
+                "reject"
+              ]
+            },
+            "description": "Reject a leave request"
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Leave Request",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/leaves/{{leaveId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "leaves",
+                "{{leaveId}}"
+              ]
+            },
+            "description": "Delete a leave request"
+          },
+          "response": []
+        },
+        {
+          "name": "Download Leave Template",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/leave-template",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "leave-template"
+              ]
+            },
+            "description": "Download Excel template for bulk leave upload"
+          },
+          "response": []
+        },
+        {
+          "name": "Upload Leave Requests (Excel)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "{{leaveFile}}"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/upload-leaves",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "upload-leaves"
+              ]
+            },
+            "description": "Bulk upload leave requests from Excel file\n\nRequired columns: EmployeeNo, LeaveDate, Type, Reason\nTypes: half-day-morning or half-day-afternoon"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Permission Management",
+      "item": [
+        {
+          "name": "Create Permission Request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"permissionDate\": \"2025-12-15\",\n  \"type\": \"1-hour-morning\",\n  \"reason\": \"Doctor appointment\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/permissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "permissions"
+              ]
+            },
+            "description": "Create a new permission request (1-hour-morning or 1-hour-afternoon)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get All Permission Requests",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/permissions?status=pending&startDate=2025-12-01&endDate=2025-12-31",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "permissions"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "pending",
+                  "disabled": false
+                },
+                {
+                  "key": "userId",
+                  "value": "{{userId}}",
+                  "disabled": true
+                },
+                {
+                  "key": "startDate",
+                  "value": "2025-12-01",
+                  "disabled": true
+                },
+                {
+                  "key": "endDate",
+                  "value": "2025-12-31",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Get all permission requests with optional filters (status, userId, date range)"
+          },
+          "response": []
+        },
+        {
+          "name": "Approve Permission Request",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"comments\": \"Approved\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/permissions/{{permissionId}}/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "permissions",
+                "{{permissionId}}",
+                "approve"
+              ]
+            },
+            "description": "Approve a permission request"
+          },
+          "response": []
+        },
+        {
+          "name": "Reject Permission Request",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"comments\": \"Not approved at this time\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/permissions/{{permissionId}}/reject",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "permissions",
+                "{{permissionId}}",
+                "reject"
+              ]
+            },
+            "description": "Reject a permission request"
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Permission Request",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/permissions/{{permissionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "permissions",
+                "{{permissionId}}"
+              ]
+            },
+            "description": "Delete a permission request"
+          },
+          "response": []
+        },
+        {
+          "name": "Download Permission Template",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/permission-template",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "permission-template"
+              ]
+            },
+            "description": "Download Excel template for bulk permission upload"
+          },
+          "response": []
+        },
+        {
+          "name": "Upload Permission Requests (Excel)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "{{permissionFile}}"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/upload-permissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "upload-permissions"
+              ]
+            },
+            "description": "Bulk upload permission requests from Excel file\n\nRequired columns: EmployeeNo, PermissionDate, Type, Reason\nTypes: 1-hour-morning or 1-hour-afternoon"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "CompOff Management",
+      "item": [
+        {
+          "name": "Create CompOff (Manual)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"earnedDate\": \"2025-12-10\",\n  \"holidayDate\": \"2025-12-25\",\n  \"earningType\": \"manual\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/compoff/manual",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "compoff",
+                "manual"
+              ]
+            },
+            "description": "Create a new CompOff record manually (admin entry)"
+          },
+          "response": []
+        },
+        {
+          "name": "Create CompOff (Automatic)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"earnedDate\": \"2025-12-10\",\n  \"holidayDate\": \"2025-12-25\",\n  \"earningType\": \"automatic\",\n  \"attendanceId\": \"attendance_id_here\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/compoff/automatic",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "compoff",
+                "automatic"
+              ]
+            },
+            "description": "Create a CompOff record automatically when staff works on holiday"
+          },
+          "response": []
+        },
+        {
+          "name": "Get All CompOff Records",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/compoff?status=available&userId={{userId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "compoff"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "available",
+                  "disabled": false
+                },
+                {
+                  "key": "userId",
+                  "value": "{{userId}}",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Get all CompOff records with optional filters (status: available/used/cancelled, userId)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get User CompOff Balance",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/users/{{userId}}/compoff-balance",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "users",
+                "{{userId}}",
+                "compoff-balance"
+              ]
+            },
+            "description": "Get CompOff balance summary for a specific user (earned, available, used, cancelled counts)"
+          },
+          "response": []
+        },
+        {
+          "name": "Mark CompOff as Used",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"usedDate\": \"2025-12-20\",\n  \"compOffNote\": \"Used for personal work\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/compoff/{{compOffId}}/use",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "compoff",
+                "{{compOffId}}",
+                "use"
+              ]
+            },
+            "description": "Mark a CompOff record as used and create corresponding attendance record"
+          },
+          "response": []
+        },
+        {
+          "name": "Cancel CompOff",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"No longer needed\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/compoff/{{compOffId}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "compoff",
+                "{{compOffId}}",
+                "cancel"
+              ]
+            },
+            "description": "Cancel a CompOff record (mark as cancelled)"
+          },
+          "response": []
+        },
+        {
+          "name": "Delete CompOff",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/compoff/{{compOffId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "compoff",
+                "{{compOffId}}"
+              ]
+            },
+            "description": "Delete a CompOff record permanently"
+          },
+          "response": []
+        },
+        {
+          "name": "Download CompOff Template",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/compoff-template",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "compoff-template"
+              ]
+            },
+            "description": "Download Excel template for bulk CompOff upload"
+          },
+          "response": []
+        },
+        {
+          "name": "Upload CompOff Records (Excel)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "{{compOffFile}}"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/upload-compoff",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "upload-compoff"
+              ]
+            },
+            "description": "Bulk upload CompOff records from Excel file\n\nRequired columns: EmployeeNo, EarnedDate, HolidayDate, EarningType (automatic/manual)"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "CompOff Reports",
+      "item": [
+        {
+          "name": "Get Monthly CompOff Report",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/users/{{userId}}/compoff-report?month=2025-12",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "users",
+                "{{userId}}",
+                "compoff-report"
+              ],
+              "query": [
+                {
+                  "key": "month",
+                  "value": "2025-12",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Get monthly CompOff report for a specific user (earned, available, used, cancelled)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Institution CompOff Summary",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/compoff-summary",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "compoff-summary"
+              ]
+            },
+            "description": "Get CompOff summary for entire institution (all users)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get User CompOff History",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/users/{{userId}}/compoff-history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "users",
+                "{{userId}}",
+                "compoff-history"
+              ]
+            },
+            "description": "Get complete CompOff history for a specific user (all transactions)"
+          },
+          "response": []
+        },
+        {
+          "name": "Assign CompOff to Faculties",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"employeeNumbers\": [\"EMP001\", \"EMP002\"],\n  \"holidayDate\": \"2025-12-10\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/compoff/assign-faculties",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "compoff",
+                "assign-faculties"
+              ]
+            },
+            "description": "Assign CompOff to multiple faculties for a specific holiday date they worked"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Faculty CompOff Assignments",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/compoff/faculty-assignments?employeeNumber=EMP001&status=available",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "compoff",
+                "faculty-assignments"
+              ],
+              "query": [
+                {
+                  "key": "employeeNumber",
+                  "value": "EMP001",
+                  "disabled": false
+                },
+                {
+                  "key": "status",
+                  "value": "available",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Get CompOff assignments for faculties with optional filters"
+          },
+          "response": []
+        },
+        {
+          "name": "Adjust CompOff Assignment",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"usedDate\": \"2025-12-20\",\n  \"status\": \"used\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/institutions/{{institutionId}}/compoff/{{compOffId}}/adjust",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "institutions",
+                "{{institutionId}}",
+                "compoff",
+                "{{compOffId}}",
+                "adjust"
+              ]
+            },
+            "description": "Adjust CompOff assignment - mark as used when faculty takes leave or modify other details"
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000/api",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "your_jwt_token_here",
+      "type": "string"
+    },
+    {
+      "key": "institutionId",
+      "value": "68e0e148f633a16a99a9df2e",
+      "type": "string"
+    },
+    {
+      "key": "userId",
+      "value": "user_id_here",
+      "type": "string"
+    },
+    {
+      "key": "leaveId",
+      "value": "leave_id_here",
+      "type": "string"
+    },
+    {
+      "key": "permissionId",
+      "value": "permission_id_here",
+      "type": "string"
+    },
+    {
+      "key": "compOffId",
+      "value": "compoff_id_here",
+      "type": "string"
+    },
+    {
+      "key": "leaveFile",
+      "value": "/path/to/leaves.xlsx",
+      "type": "string"
+    },
+    {
+      "key": "permissionFile",
+      "value": "/path/to/permissions.xlsx",
+      "type": "string"
+    },
+    {
+      "key": "compOffFile",
+      "value": "/path/to/compoff.xlsx",
+      "type": "string"
+    }
+  ]
+}

@@ -1,0 +1,678 @@
+{
+	"info": {
+		"_postman_id": "b2c3d4e5-f6g7-h8i9-j0k1-l2m3n4o5p6q7",
+		"name": "Faculty On Duty Management (Extended)",
+		"description": "Extended collection for testing On Duty functionality for faculty members with additional test cases",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Authentication",
+			"item": [
+				{
+					"name": "Login",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"pm.environment.set(\"token\", jsonData.token);",
+									"",
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has token\", function () {",
+									"    pm.expect(jsonData.token).to.exist;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"{{admin_email}}\",\n    \"password\": \"{{admin_password}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/login",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"auth",
+								"login"
+							]
+						},
+						"description": "Login to get authentication token"
+					},
+					"response": []
+				}
+			],
+			"description": "Authentication endpoints"
+		},
+		{
+			"name": "On Duty Management",
+			"item": [
+				{
+					"name": "Create On Duty Record",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"",
+									"pm.test(\"Status code is 201\", function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"",
+									"pm.test(\"Response has _id\", function () {",
+									"    pm.expect(jsonData._id).to.exist;",
+									"    pm.environment.set(\"on_duty_id\", jsonData._id);",
+									"});",
+									"",
+									"pm.test(\"Response has correct data\", function () {",
+									"    pm.expect(jsonData.userId).to.equal(pm.environment.get(\"user_id\"));",
+									"    pm.expect(jsonData.institutionId).to.equal(pm.environment.get(\"institution_id\"));",
+									"    pm.expect(jsonData.description).to.exist;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"startDate\": \"2023-11-15T00:00:00.000Z\",\n    \"endDate\": \"2023-11-17T23:59:59.999Z\",\n    \"description\": \"Faculty attending conference at Delhi University\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/institutions/{{institution_id}}/users/{{user_id}}/on-duty",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"institutions",
+								"{{institution_id}}",
+								"users",
+								"{{user_id}}",
+								"on-duty"
+							]
+						},
+						"description": "Create a new On Duty record for a faculty member"
+					},
+					"response": []
+				},
+				{
+					"name": "Create On Duty Record (Missing Fields)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 400\", function () {",
+									"    pm.response.to.have.status(400);",
+									"});",
+									"",
+									"pm.test(\"Error message exists\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.message).to.exist;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"startDate\": \"2023-11-15T00:00:00.000Z\"\n    // Missing endDate and description\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/institutions/{{institution_id}}/users/{{user_id}}/on-duty",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"institutions",
+								"{{institution_id}}",
+								"users",
+								"{{user_id}}",
+								"on-duty"
+							]
+						},
+						"description": "Test validation by creating an On Duty record with missing required fields"
+					},
+					"response": []
+				},
+				{
+					"name": "Get User On Duty Records",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response is an array\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(Array.isArray(jsonData)).to.be.true;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/institutions/{{institution_id}}/users/{{user_id}}/on-duty",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"institutions",
+								"{{institution_id}}",
+								"users",
+								"{{user_id}}",
+								"on-duty"
+							]
+						},
+						"description": "Get all On Duty records for a specific user"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Institution On Duty Records",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response is an array\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(Array.isArray(jsonData)).to.be.true;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/institutions/{{institution_id}}/on-duty?startDate=2023-11-01&endDate=2023-11-30",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"institutions",
+								"{{institution_id}}",
+								"on-duty"
+							],
+							"query": [
+								{
+									"key": "startDate",
+									"value": "2023-11-01",
+									"description": "Optional filter for start date"
+								},
+								{
+									"key": "endDate",
+									"value": "2023-11-30",
+									"description": "Optional filter for end date"
+								}
+							]
+						},
+						"description": "Get all On Duty records for an institution with optional date filtering"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Institution On Duty Records (No Date Filter)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response is an array\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(Array.isArray(jsonData)).to.be.true;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/institutions/{{institution_id}}/on-duty",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"institutions",
+								"{{institution_id}}",
+								"on-duty"
+							]
+						},
+						"description": "Get all On Duty records for an institution without date filtering"
+					},
+					"response": []
+				},
+				{
+					"name": "Update On Duty Record",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has updated data\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData._id).to.equal(pm.environment.get(\"on_duty_id\"));",
+									"    pm.expect(jsonData.description).to.include(\"workshop\");",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"startDate\": \"2023-11-15T00:00:00.000Z\",\n    \"endDate\": \"2023-11-18T23:59:59.999Z\",\n    \"description\": \"Faculty attending conference and workshop at Delhi University\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/institutions/{{institution_id}}/on-duty/{{on_duty_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"institutions",
+								"{{institution_id}}",
+								"on-duty",
+								"{{on_duty_id}}"
+							]
+						},
+						"description": "Update an existing On Duty record"
+					},
+					"response": []
+				},
+				{
+					"name": "Update On Duty Record (Invalid ID)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 404\", function () {",
+									"    pm.response.to.have.status(404);",
+									"});",
+									"",
+									"pm.test(\"Error message exists\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.message).to.exist;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"description\": \"Updated description\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/institutions/{{institution_id}}/on-duty/000000000000000000000000",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"institutions",
+								"{{institution_id}}",
+								"on-duty",
+								"000000000000000000000000"
+							]
+						},
+						"description": "Test updating a non-existent On Duty record"
+					},
+					"response": []
+				},
+				{
+					"name": "Delete On Duty Record",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Success message exists\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.message).to.exist;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/institutions/{{institution_id}}/on-duty/{{on_duty_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"institutions",
+								"{{institution_id}}",
+								"on-duty",
+								"{{on_duty_id}}"
+							]
+						},
+						"description": "Delete an On Duty record"
+					},
+					"response": []
+				},
+				{
+					"name": "Delete On Duty Record (Invalid ID)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 404\", function () {",
+									"    pm.response.to.have.status(404);",
+									"});",
+									"",
+									"pm.test(\"Error message exists\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.message).to.exist;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/institutions/{{institution_id}}/on-duty/000000000000000000000000",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"institutions",
+								"{{institution_id}}",
+								"on-duty",
+								"000000000000000000000000"
+							]
+						},
+						"description": "Test deleting a non-existent On Duty record"
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints for managing On Duty records"
+		},
+		{
+			"name": "Reports",
+			"item": [
+				{
+					"name": "Get Monthly Daily Status Report",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has download links\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.excelDownload).to.exist;",
+									"    pm.expect(jsonData.pdfDownload).to.exist;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/institutions/{{institution_id}}/monthly-daily-attendance-status?month=11&year=2023",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"institutions",
+								"{{institution_id}}",
+								"monthly-daily-attendance-status"
+							],
+							"query": [
+								{
+									"key": "month",
+									"value": "11",
+									"description": "Month number (1-12)"
+								},
+								{
+									"key": "year",
+									"value": "2023",
+									"description": "Year (e.g., 2023)"
+								}
+							]
+						},
+						"description": "Get monthly daily status report with On Duty status included"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Monthly Daily Status Report (Current Month)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has download links\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.excelDownload).to.exist;",
+									"    pm.expect(jsonData.pdfDownload).to.exist;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/institutions/{{institution_id}}/monthly-daily-attendance-status",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"institutions",
+								"{{institution_id}}",
+								"monthly-daily-attendance-status"
+							]
+						},
+						"description": "Get monthly daily status report for the current month"
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints for generating reports that include On Duty status"
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:3000/api",
+			"type": "string"
+		},
+		{
+			"key": "institution_id",
+			"value": "your_institution_id",
+			"type": "string"
+		},
+		{
+			"key": "user_id",
+			"value": "faculty_user_id",
+			"type": "string"
+		},
+		{
+			"key": "on_duty_id",
+			"value": "on_duty_record_id",
+			"type": "string"
+		},
+		{
+			"key": "admin_email",
+			"value": "admin@example.com",
+			"type": "string"
+		},
+		{
+			"key": "admin_password",
+			"value": "your_password",
+			"type": "string"
+		}
+	]
+}

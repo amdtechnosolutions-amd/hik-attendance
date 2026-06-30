@@ -1,0 +1,437 @@
+{
+  "info": {
+    "name": "Holiday API Collection",
+    "description": "Complete API collection for managing institution and emergency holidays in Hikvision Attendance System",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"your_password\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "login"]
+            }
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"your_password\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/login",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "auth", "login"]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"success\": true,\n  \"token\": \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjYwZDFhMmIzYzRkNWU2ZjdhOGI5YzBkMiIsInJvbGUiOiJpbnN0aXR1dGlvbl9hZG1pbiIsImlhdCI6MTYzNDU0MzIwMH0.xyz\",\n  \"user\": {\n    \"_id\": \"60d1a2b3c4d5e6f7a8b9c0d2\",\n    \"username\": \"admin\",\n    \"role\": \"institution_admin\"\n  }\n}\n"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Holiday Management",
+      "item": [
+        {
+          "name": "Create Holiday",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Year-End Holiday\",\n  \"startDate\": \"2025-12-20T00:00:00.000Z\",\n  \"endDate\": \"2025-12-22T23:59:59.999Z\",\n  \"type\": \"emergency-holiday\",\n  \"description\": \"Emergency closure due to maintenance\",\n  \"showInAttendance\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/institutions/{{institutionId}}/holidays",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "institutions", "{{institutionId}}", "holidays"]
+            }
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Year-End Holiday\",\n  \"startDate\": \"2025-12-20T00:00:00.000Z\",\n  \"endDate\": \"2025-12-22T23:59:59.999Z\",\n  \"type\": \"emergency-holiday\",\n  \"description\": \"Emergency closure\",\n  \"showInAttendance\": false\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/institutions/{{institutionId}}/holidays",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "institutions", "{{institutionId}}", "holidays"]
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"success\": true,\n  \"holiday\": {\n    \"_id\": \"60f1a1b2c3d4e5f6a7b8c9d0\",\n    \"institutionId\": \"68c160eae77b04e4b08ad66c\",\n    \"name\": \"Year-End Holiday\",\n    \"startDate\": \"2025-12-20T00:00:00.000Z\",\n    \"endDate\": \"2025-12-22T23:59:59.999Z\",\n    \"type\": \"emergency-holiday\",\n    \"description\": \"Emergency closure due to maintenance\",\n    \"isActive\": true,\n    \"showInAttendance\": false,\n    \"createdBy\": \"60d1a2b3c4d5e6f7a8b9c0d2\",\n    \"createdAt\": \"2025-12-18T10:30:00.000Z\",\n    \"updatedAt\": \"2025-12-18T10:30:00.000Z\"\n  }\n}\n"
+            }
+          ]
+        },
+        {
+          "name": "Get All Holidays",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/institutions/{{institutionId}}/holidays",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "institutions", "{{institutionId}}", "holidays"]
+            }
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/institutions/{{institutionId}}/holidays",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "institutions", "{{institutionId}}", "holidays"]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"success\": true,\n  \"holidays\": [\n    {\n      \"_id\": \"60f1a1b2c3d4e5f6a7b8c9d0\",\n      \"institutionId\": \"68c160eae77b04e4b08ad66c\",\n      \"name\": \"Year-End Holiday\",\n      \"startDate\": \"2025-12-20T00:00:00.000Z\",\n      \"endDate\": \"2025-12-22T23:59:59.999Z\",\n      \"type\": \"emergency-holiday\",\n      \"description\": \"Emergency closure\",\n      \"isActive\": true,\n      \"showInAttendance\": false,\n      \"createdBy\": \"60d1a2b3c4d5e6f7a8b9c0d2\",\n      \"createdAt\": \"2025-12-18T10:30:00.000Z\",\n      \"updatedAt\": \"2025-12-18T10:30:00.000Z\"\n    },\n    {\n      \"_id\": \"60f1a1b2c3d4e5f6a7b8c9d1\",\n      \"institutionId\": \"68c160eae77b04e4b08ad66c\",\n      \"name\": \"Institution Holiday\",\n      \"startDate\": \"2025-12-01T00:00:00.000Z\",\n      \"endDate\": \"2025-12-02T23:59:59.999Z\",\n      \"type\": \"institution-holiday\",\n      \"description\": \"Annual holiday\",\n      \"isActive\": true,\n      \"showInAttendance\": true,\n      \"createdBy\": \"60d1a2b3c4d5e6f7a8b9c0d2\",\n      \"createdAt\": \"2025-11-20T10:30:00.000Z\",\n      \"updatedAt\": \"2025-11-20T10:30:00.000Z\"\n    }\n  ]\n}\n"
+            }
+          ]
+        },
+        {
+          "name": "Get Holidays with Filters",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/institutions/{{institutionId}}/holidays?startDate=2025-12-01&endDate=2025-12-31&type=emergency-holiday",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "institutions", "{{institutionId}}", "holidays"],
+              "query": [
+                {
+                  "key": "startDate",
+                  "value": "2025-12-01"
+                },
+                {
+                  "key": "endDate",
+                  "value": "2025-12-31"
+                },
+                {
+                  "key": "type",
+                  "value": "emergency-holiday"
+                },
+                {
+                  "key": "showOnly",
+                  "value": "true",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Holiday by ID",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/institutions/{{institutionId}}/holidays/{{holidayId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "institutions", "{{institutionId}}", "holidays", "{{holidayId}}"]
+            }
+          }
+        },
+        {
+          "name": "Update Holiday",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Extended Year-End Holiday\",\n  \"startDate\": \"2025-12-20T00:00:00.000Z\",\n  \"endDate\": \"2025-12-25T23:59:59.999Z\",\n  \"description\": \"Extended closure\",\n  \"showInAttendance\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/institutions/{{institutionId}}/holidays/{{holidayId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "institutions", "{{institutionId}}", "holidays", "{{holidayId}}"]
+            }
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Extended Year-End Holiday\",\n  \"showInAttendance\": true\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/institutions/{{institutionId}}/holidays/{{holidayId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "institutions", "{{institutionId}}", "holidays", "{{holidayId}}"]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"success\": true,\n  \"holiday\": {\n    \"_id\": \"60f1a1b2c3d4e5f6a7b8c9d0\",\n    \"institutionId\": \"68c160eae77b04e4b08ad66c\",\n    \"name\": \"Extended Year-End Holiday\",\n    \"startDate\": \"2025-12-20T00:00:00.000Z\",\n    \"endDate\": \"2025-12-25T23:59:59.999Z\",\n    \"type\": \"emergency-holiday\",\n    \"description\": \"Extended closure\",\n    \"isActive\": true,\n    \"showInAttendance\": true,\n    \"createdBy\": \"60d1a2b3c4d5e6f7a8b9c0d2\",\n    \"createdAt\": \"2025-12-18T10:30:00.000Z\",\n    \"updatedAt\": \"2025-12-18T14:45:00.000Z\"\n  }\n}\n"
+            }
+          ]
+        },
+        {
+          "name": "Delete Holiday",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/institutions/{{institutionId}}/holidays/{{holidayId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "institutions", "{{institutionId}}", "holidays", "{{holidayId}}"]
+            }
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "originalRequest": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/institutions/{{institutionId}}/holidays/{{holidayId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "institutions", "{{institutionId}}", "holidays", "{{holidayId}}"]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"success\": true,\n  \"message\": \"Holiday deleted\"\n}\n"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Common Workflows",
+      "item": [
+        {
+          "name": "1. Create Dec 1-2 Holiday",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Institution Holiday - Dec 1-2\",\n  \"startDate\": \"2025-12-01T00:00:00.000Z\",\n  \"endDate\": \"2025-12-02T23:59:59.999Z\",\n  \"type\": \"institution-holiday\",\n  \"description\": \"Annual institution holiday\",\n  \"showInAttendance\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/institutions/{{institutionId}}/holidays",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "institutions", "{{institutionId}}", "holidays"]
+            }
+          }
+        },
+        {
+          "name": "2. Create Dec 20-22 Holiday",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Year-End Holiday - Dec 20-22\",\n  \"startDate\": \"2025-12-20T00:00:00.000Z\",\n  \"endDate\": \"2025-12-22T23:59:59.999Z\",\n  \"type\": \"institution-holiday\",\n  \"description\": \"Annual year-end holiday\",\n  \"showInAttendance\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/institutions/{{institutionId}}/holidays",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "institutions", "{{institutionId}}", "holidays"]
+            }
+          }
+        },
+        {
+          "name": "3. Get All December Holidays",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/institutions/{{institutionId}}/holidays?startDate=2025-12-01&endDate=2025-12-31",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "institutions", "{{institutionId}}", "holidays"],
+              "query": [
+                {
+                  "key": "startDate",
+                  "value": "2025-12-01"
+                },
+                {
+                  "key": "endDate",
+                  "value": "2025-12-31"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "4. Create Emergency Holiday",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Emergency Closure\",\n  \"startDate\": \"2025-12-25T00:00:00.000Z\",\n  \"endDate\": \"2025-12-25T23:59:59.999Z\",\n  \"type\": \"emergency-holiday\",\n  \"description\": \"Unexpected facility closure\",\n  \"showInAttendance\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/institutions/{{institutionId}}/holidays",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "institutions", "{{institutionId}}", "holidays"]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4000"
+    },
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "institutionId",
+      "value": ""
+    },
+    {
+      "key": "holidayId",
+      "value": ""
+    }
+  ]
+}

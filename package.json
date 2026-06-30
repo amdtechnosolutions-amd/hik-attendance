@@ -1,0 +1,44 @@
+{
+  "name": "hik-attendance",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "nodemon --watch src --exec node src/app.js",
+    "pm2:start": "pm2 start ecosystem.config.cjs",
+    "pm2:stop": "pm2 stop hik-attendance",
+    "pm2:restart": "pm2 restart hik-attendance",
+    "pm2:logs": "pm2 logs hik-attendance",
+    "pm2:monit": "pm2 monit"
+  },
+  "dependencies": {
+    "axios": "^1.12.2",
+    "bcrypt": "^5.1.0",
+    "cors": "^2.8.5",
+    "date-fns-tz": "^3.2.0",
+    "digest-fetch": "^3.1.1",
+    "dotenv": "^16.0.0",
+    "exceljs": "^4.3.0",
+    "express": "^4.18.2",
+    "express-async-handler": "^1.2.0",
+    "jsonwebtoken": "^9.0.0",
+    "moment": "^2.30.1",
+    "moment-timezone": "^0.6.0",
+    "mongoose": "^7.6.0",
+    "morgan": "^1.10.0",
+    "multer": "^2.0.2",
+    "node-cron": "^4.2.1",
+    "node-fetch": "^3.3.2",
+    "nodemailer": "^7.0.11",
+    "pdfkit": "^0.17.2",
+    "pm2": "^6.0.14",
+    "swagger-ui-express": "^5.0.1",
+    "uuid": "^9.0.0",
+    "xlsx": "^0.18.5",
+    "xml2js": "^0.6.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}

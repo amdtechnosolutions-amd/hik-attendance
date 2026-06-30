@@ -1,0 +1,1670 @@
+import User from '../models/User.js';
+import Device from '../models/Device.js';
+import { addPersonToDevice } from '../services/hikvisionService.js';
+import { formatISAPITime } from '../utils/timeUtil.js';
+import { fetchUsersFromDevice } from '../services/deviceService.js';
+import mongoose from 'mongoose';
+import path from 'path';
+import fs from 'fs';
+import ExcelJS from 'exceljs';
+import Institution from '../models/Institution.js';
+import moment from "moment-timezone";
+import PDFDocument from "pdfkit";
+import Attendance from '../models/Attendance.js';
+async function generateAttendancePDFMultiPage(users, institution, now, logoPath, pdfFilePath) {
+  return new Promise((resolve, reject) => {
+    try {
+      const doc = new PDFDocument({ margin: 10, size: "A4", layout: "landscape" });
+      const stream = fs.createWriteStream(pdfFilePath);
+      doc.pipe(stream);
+
+      // Place Logo
+      let yPos = 30;
+      if (fs.existsSync(logoPath)) {
+        const logoWidth = 50;
+        const logoHeight = 50;
+        doc.image(logoPath, (doc.page.width - logoWidth) / 2, yPos, { width: logoWidth, height: logoHeight });
+        yPos += logoHeight + 30; // Add vertical space below logo
+      } else {
+        yPos += 30;
+      }
+
+      // Institution Name & Report Title below logo with vertical spacing
+      doc.fontSize(14).font("Helvetica-Bold").text(institution.name, { align: "center", baseline: 'middle', y: yPos });
+      yPos += 80;
+      doc.fontSize(10).font("Helvetica").text(`Attendance Report for ${now.toLocaleString("default", { month: "long" })} ${now.getFullYear()}`, { align: "center", y: yPos });
+      yPos += 50; // Leave space before table header
+
+      const leftMargin = 30;
+      const bottomMargin = 50;
+      const rowHeight = 20;
+      const colEmployeeNoWidth = 80;
+      const colNameWidth = 140;
+      const colDateWidth = 40;
+      const headerColor = "#8B4513";
+      const headerTextColor = "#FFFFFF";
+      const oddRowColor = "#F8F8F8";
+
+      const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+
+      // Calculate max date-cols per page (each day has 2 columns)
+      const pageWidth = doc.page.width - leftMargin * 2;
+      const fixedColsWidth = colEmployeeNoWidth + colNameWidth;
+      // const maxDateColsPerPage = Math.floor((pageWidth - fixedColsWidth) / (colDateWidth * 2));
+      const maxDateColsPerPage = 5;
+      const dateChunks = [];
+      for (let i = 1; i <= daysInMonth; i += maxDateColsPerPage) {
+        dateChunks.push({ start: i, end: Math.min(i + maxDateColsPerPage - 1, daysInMonth) });
+      }
+
+      // Format users' attendance for quick date lookup
+      const usersFormatted = users.map(user => {
+        const attMap = {};
+        user.attendance.forEach(att => {
+          attMap[moment(att.date).date()] = {
+            in: att.firstCheckIn ? moment(att.firstCheckIn).tz("Asia/Kolkata").format("HH:mm") : "",
+            out: att.lastCheckOut ? moment(att.lastCheckOut).tz("Asia/Kolkata").format("HH:mm") : "",
+          };
+        });
+        return {
+          employeeNo: user.employeeNo,
+          name: user.name.toUpperCase(), // Convert name to uppercase
+          attendance: attMap,
+        };
+      });
+
+      function drawHeader(x, y, startDay, endDay) {
+        let currentX = x;
+        doc.fontSize(10).font("Helvetica-Bold");
+        doc.rect(currentX, y, colEmployeeNoWidth, rowHeight * 2)
+          .fill(headerColor).fillColor(headerTextColor);
+        doc.text("Employee No", currentX, y + 6, { width: colEmployeeNoWidth, align: "center" });
+        currentX += colEmployeeNoWidth;
+
+        doc.rect(currentX, y, colNameWidth, rowHeight * 2)
+          .fill(headerColor);
+        doc.text("Name", currentX, y + 6, { width: colNameWidth, align: "center" });
+        currentX += colNameWidth;
+
+        for (let d = startDay; d <= endDay; d++) {
+          const dateStr = moment(new Date(now.getFullYear(), now.getMonth(), d)).format("DD-MM-YYYY");
+          doc.rect(currentX, y, colDateWidth * 2, rowHeight)
+            .fill(headerColor).fillColor(headerTextColor);
+          doc.text(dateStr, currentX, y + 6, { width: colDateWidth * 2, align: "center" });
+
+          doc.rect(currentX, y + rowHeight, colDateWidth, rowHeight)
+            .fill(headerColor).fillColor(headerTextColor);
+          doc.text("In", currentX, y + rowHeight + 6, { width: colDateWidth, align: "center" });
+          currentX += colDateWidth;
+
+          doc.rect(currentX, y + rowHeight, colDateWidth, rowHeight)
+            .fill(headerColor).fillColor(headerTextColor);
+          doc.text("Out", currentX, y + rowHeight + 6, { width: colDateWidth, align: "center" });
+          currentX += colDateWidth;
+        }
+        doc.fillColor("black");
+      }
+
+      function drawRow(x, y, startDay, endDay, user, isOdd) {
+        let currentX = x;
+        const rowWidth = colEmployeeNoWidth + colNameWidth + colDateWidth * 2 * (endDay - startDay + 1);
+        if (isOdd) {
+          doc.rect(x, y, rowWidth, rowHeight)
+            .fill(oddRowColor).fillColor("black");
+        } else {
+          doc.fillColor("black");
+        }
+        doc.fontSize(10);
+        doc.text(user.employeeNo, currentX + 5, y + 6, { width: colEmployeeNoWidth - 10, align: "center" });
+        currentX += colEmployeeNoWidth;
+
+        doc.text(user.name, currentX + 5, y + 6, { width: colNameWidth - 10, align: "center" });
+        currentX += colNameWidth;
+
+        for (let d = startDay; d <= endDay; d++) {
+          const att = user.attendance[d] || { in: "", out: "" };
+          doc.text(att.in, currentX + 5, y + 6, { width: colDateWidth - 10, align: "center" });
+          currentX += colDateWidth;
+          doc.text(att.out, currentX + 5, y + 6, { width: colDateWidth - 10, align: "center" });
+          currentX += colDateWidth;
+        }
+      }
+
+      const maxRowsPerPage = Math.floor((doc.page.height - yPos - bottomMargin) / rowHeight);
+      let pageNum = 0;
+
+      for (const chunk of dateChunks) {
+        if (pageNum > 0) doc.addPage();
+
+        // Repeat logo and titles on new page
+        let currentY = 20;
+        if (fs.existsSync(logoPath)) {
+          const logoWidth = 100;
+          const logoHeight = 100;
+          doc.image(logoPath, (doc.page.width - logoWidth) / 2, currentY, { width: logoWidth, height: logoHeight });
+          currentY += logoHeight + 20;
+        } else {
+          currentY += 20;
+        }
+        doc.fontSize(14).font("Helvetica-Bold").text(institution.name, { align: "center", y: currentY });
+        currentY += 20;
+        doc.fontSize(10).font("Helvetica").text(`Attendance Report for ${now.toLocaleString("default", { month: "long" })} ${now.getFullYear()}`, { align: "center", y: currentY });
+        currentY += 30;
+
+        drawHeader(leftMargin, currentY, chunk.start, chunk.end);
+        currentY += rowHeight * 2;
+
+        let rowsOnPage = 0;
+        for (let i = 0; i < usersFormatted.length; i++) {
+          if (rowsOnPage >= maxRowsPerPage) {
+            doc.addPage();
+            currentY = 20;
+            if (fs.existsSync(logoPath)) {
+              const logoWidth = 100;
+              const logoHeight = 100;
+              doc.image(logoPath, (doc.page.width - logoWidth) / 2, currentY, { width: logoWidth, height: logoHeight });
+              currentY += logoHeight + 20;
+            } else {
+              currentY += 20;
+            }
+            doc.fontSize(14).font("Helvetica-Bold").text(institution.name, { align: "center", y: currentY });
+            currentY += 20;
+            doc.fontSize(10).font("Helvetica").text(`Attendance Report for ${now.toLocaleString("default", { month: "long" })} ${now.getFullYear()}`, { align: "center", y: currentY });
+            currentY += 30;
+
+            drawHeader(leftMargin, currentY, chunk.start, chunk.end);
+            currentY += rowHeight * 2;
+            rowsOnPage = 0;
+          }
+          drawRow(leftMargin, currentY, chunk.start, chunk.end, usersFormatted[i], rowsOnPage % 2 === 1);
+          currentY += rowHeight;
+          rowsOnPage++;
+        }
+
+        pageNum++;
+      }
+
+      doc.end();
+      stream.on("finish", resolve);
+      stream.on("error", reject);
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+export async function addUser(req, res) {
+  const { institutionId } = req.params;
+  const { name, employeeNo, userType, deviceId } = req.body;
+
+  try {
+    // Use institution-specific database models
+    const { models } = req.institutionDb;
+
+    // Save user in institution-specific DB
+    const user = await models.User.create({
+      institutionId,
+      employeeNo,
+      name,
+      userType
+    });
+
+    // Prepare ISAPI payload
+    const payload = {
+      UserInfo: {
+        employeeNo: employeeNo.toString(),
+        name,
+        userType: userType || 'normal',
+        Valid: {
+          enable: true,
+          beginTime: formatISAPITime(new Date('2025-09-10T19:19:20')),
+          endTime: formatISAPITime(new Date('2027-09-09T05:30:00'))
+        },
+        doorRight: '1',
+        RightPlan: [{ doorNo: 1, planTemplateNo: '1' }],
+        PersonInfoExtends: []
+      }
+    };
+
+    // If a device is specified, add user to device
+    if (deviceId) {
+      const device = await models.Device.findById(deviceId);
+      if (!device) return res.status(404).json({ message: 'Device not found' });
+
+      const deviceRes = await addPersonToDevice(device, payload);
+      return res.json({ user, deviceRes });
+    }
+
+    res.json({ user });
+  } catch (err) {
+    console.error('Error adding user:', err);
+    res.status(500).json({ message: err.message });
+  }
+}
+export async function createDeviceUser(req, res) {
+  try {
+    const { employeeNo, name } = req.body;
+
+    // Add user to ISAPI device
+    const deviceResponse = await addUserToDevice(employeeNo, name);
+
+    // Optional: Save user info in your database
+    // const user = await User.create({ employeeNo, name });
+
+    res.json({
+      success: true,
+      message: 'User added successfully',
+      deviceResponse
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+}
+async function listUsers(req, res) {
+  const { institutionId } = req.params;
+
+  try {
+    // Use institution-specific database models
+    const { models } = req.institutionDb;
+
+    // Query users from institution-specific database
+    const users = await models.User.find({ institutionId });
+
+    res.json({
+      count: users.length,
+      users
+    });
+  } catch (err) {
+    console.error('Error listing users:', err);
+    res.status(500).json({ message: err.message });
+  }
+}
+
+export async function importUsersFromDevice(req, res) {
+  try {
+    const { institutionId } = req.params;
+    const { deviceId } = req.body;
+    
+    if (!deviceId) {
+      return res.status(400).json({ message: 'Device ID is required' });
+    }
+    
+    // Use the institution-specific models from the middleware
+    const { models } = req.institutionDb;
+    
+    // Find the device using the institution-specific Device model
+    const device = await models.Device.findById(deviceId);
+    console.log(device);
+    
+    if (!device) {
+      return res.status(404).json({ message: 'Device not found' });
+    }
+
+    // Pass the institution-specific User model to fetchUsersFromDevice
+    const users = await fetchUsersFromDevice(device, institutionId, models.User);
+
+    res.json({ 
+      success: true, 
+      message: `Successfully imported ${users.length} users from device to institution database`,
+      count: users.length, 
+      users 
+    });
+  } catch (err) {
+    console.error('Error importing users:', err);
+    res.status(500).json({ message: err.message });
+  }
+}
+// Fetch a user from MongoDB and push to device
+export async function pushUserToDevice(req, res) {
+  const { userId, deviceId } = req.body;
+
+  try {
+    // Get institution-specific models
+    const { models } = req.institutionDb;
+    
+    // 1. Get user from institution-specific MongoDB
+    const user = await models.User.findById(userId);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    // 2. Get device from institution-specific MongoDB
+    const device = await models.Device.findById(deviceId);
+    if (!device) return res.status(404).json({ message: 'Device not found' });
+
+    // 3. Build ISAPI payload
+    const payload = {
+      UserInfo: {
+        employeeNo: user.employeeNo.toString(),
+        name: user.name,
+        userType: user.userType || 'normal',
+        Valid: {
+          enable: true,
+          beginTime: formatISAPITime(new Date('2025-09-10T19:19:20')),
+          endTime: formatISAPITime(new Date('2027-09-09T05:30:00'))
+        },
+        doorRight: '1',
+        RightPlan: [{ doorNo: 1, planTemplateNo: '1' }],
+        PersonInfoExtends: []
+      }
+    };
+
+    // 4. Send user to device
+    const deviceRes = await addPersonToDevice(device, payload);
+
+    // 5. Respond
+    res.json({
+      message: 'User pushed to device successfully',
+      user,
+      deviceRes
+    });
+
+  } catch (err) {
+    console.error('Error pushing user to device:', err);
+    res.status(500).json({ message: err.message });
+  }
+}
+
+
+export async function getUsersWithCurrentMonthAttendance(req, res) {
+  try {
+    const { institutionId } = req.params;
+    // Get institution-specific models
+    const { models } = req.institutionDb;
+
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+
+    // Fetch users with attendance aggregation using institution-specific User model
+    const users = await models.User.aggregate([
+      { $match: { institutionId: new mongoose.Types.ObjectId(institutionId) } },
+      {
+        $lookup: {
+          from: "attendances",
+          let: { empNo: "$employeeNo", instId: "$institutionId" },
+          pipeline: [
+            {
+              $match: {
+                $expr: { $and: [{ $eq: ["$employeeNo", "$$empNo"] }, { $eq: ["$institutionId", "$$instId"] }] },
+                timestamp: { $gte: startOfMonth, $lte: endOfMonth },
+              },
+            },
+            {
+              $group: {
+                _id: {
+                  day: { $dayOfMonth: "$timestamp" },
+                  month: { $month: "$timestamp" },
+                  year: { $year: "$timestamp" },
+                },
+                firstCheckIn: { $min: "$timestamp" },
+                lastCheckOut: { $max: "$timestamp" },
+              },
+            },
+            {
+              $project: {
+                _id: 0,
+                date: {
+                  $dateFromParts: {
+                    year: "$_id.year",
+                    month: "$_id.month",
+                    day: "$_id.day",
+                  },
+                },
+                firstCheckIn: 1,
+                lastCheckOut: 1,
+              },
+            },
+            { $sort: { date: 1 } },
+          ],
+          as: "attendance",
+        },
+      },
+    ]);
+
+    const institution = await Institution.findById(institutionId);
+
+    // Create reports folder if not exists
+    const reportsDir = path.join(process.cwd(), "public", "reports");
+    if (!fs.existsSync(reportsDir)) fs.mkdirSync(reportsDir, { recursive: true });
+
+    // =========================== Excel Report ===========================
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Attendance Report");
+
+    const logoPath = path.join(process.cwd(), "public", "logo.png");
+    if (fs.existsSync(logoPath)) {
+      const logoId = workbook.addImage({ filename: logoPath, extension: "png" });
+      worksheet.addImage(logoId, { tl: { col: 2, row: 0 }, br: { col: 5, row: 6 }, editAs: "oneCell" });
+    }
+
+    worksheet.mergeCells("A7:H7");
+    worksheet.getCell("A7").value = institution.name;
+    worksheet.getCell("A7").font = { size: 16, bold: true };
+    worksheet.getCell("A7").alignment = { horizontal: "center" };
+
+    worksheet.mergeCells("A8:H8");
+    worksheet.getCell("A8").value = `Attendance Report for ${now.toLocaleString("default", { month: "long" })} ${now.getFullYear()}`;
+    worksheet.getCell("A8").font = { size: 12, bold: true };
+    worksheet.getCell("A8").alignment = { horizontal: "center" };
+
+    const headerRow1 = 10;
+    const headerRow2 = 11;
+
+    worksheet.getColumn(1).width = 25; // Employee No
+    worksheet.getColumn(2).width = 25; // Name
+
+    // Set border style for all cells
+    worksheet.properties.defaultRowHeight = 20;
+    worksheet.properties.outlineLevelRow = 1;
+
+    worksheet.mergeCells(headerRow1, 1, headerRow2, 1);
+    worksheet.getCell(headerRow1, 1).value = "Employee No";
+    worksheet.getCell(headerRow1, 1).alignment = { vertical: "middle", horizontal: "center" };
+    worksheet.getCell(headerRow1, 1).font = { bold: true };
+    worksheet.getCell(headerRow1, 1).border = {
+      top: { style: 'thin' },
+      left: { style: 'thin' },
+      bottom: { style: 'thin' },
+      right: { style: 'thin' }
+    };
+
+    worksheet.mergeCells(headerRow1, 2, headerRow2, 2);
+    worksheet.getCell(headerRow1, 2).value = "Name";
+    worksheet.getCell(headerRow1, 2).alignment = { vertical: "middle", horizontal: "center" };
+    worksheet.getCell(headerRow1, 2).font = { bold: true };
+    worksheet.getCell(headerRow1, 2).border = {
+      top: { style: 'thin' },
+      left: { style: 'thin' },
+      bottom: { style: 'thin' },
+      right: { style: 'thin' }
+    };
+
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    let col = 3;
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateStr = moment(new Date(now.getFullYear(), now.getMonth(), day)).format("DD-MM-YYYY");
+      worksheet.mergeCells(headerRow1, col, headerRow1, col + 1);
+      worksheet.getCell(headerRow1, col).value = dateStr;
+      worksheet.getCell(headerRow1, col).font = { bold: true };
+      worksheet.getCell(headerRow1, col).alignment = { horizontal: "center", vertical: "middle" };
+      worksheet.getCell(headerRow1, col).border = {
+        top: { style: 'thin' },
+        left: { style: 'thin' },
+        bottom: { style: 'thin' },
+        right: { style: 'thin' }
+      };
+
+      worksheet.getCell(headerRow2, col).value = "In";
+      worksheet.getCell(headerRow2, col).alignment = { horizontal: "center" };
+      worksheet.getCell(headerRow2, col).font = { bold: true };
+      worksheet.getCell(headerRow2, col).border = {
+        top: { style: 'thin' },
+        left: { style: 'thin' },
+        bottom: { style: 'thin' },
+        right: { style: 'thin' }
+      };
+
+      worksheet.getCell(headerRow2, col + 1).value = "Out";
+      worksheet.getCell(headerRow2, col + 1).alignment = { horizontal: "center" };
+      worksheet.getCell(headerRow2, col + 1).font = { bold: true };
+      worksheet.getCell(headerRow2, col + 1).border = {
+        top: { style: 'thin' },
+        left: { style: 'thin' },
+        bottom: { style: 'thin' },
+        right: { style: 'thin' }
+      };
+
+      worksheet.getColumn(col).width = 10;
+      worksheet.getColumn(col + 1).width = 10;
+      col += 2;
+    }
+
+    // Status column
+    worksheet.mergeCells(headerRow1, col, headerRow2, col);
+    worksheet.getCell(headerRow1, col).value = "Status";
+    worksheet.getCell(headerRow1, col).font = { bold: true };
+    worksheet.getCell(headerRow1, col).alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+    worksheet.getCell(headerRow1, col).border = {
+      top: { style: 'thin' },
+      left: { style: 'thin' },
+      bottom: { style: 'thin' },
+      right: { style: 'thin' }
+    };
+    worksheet.getColumn(col).width = 20;
+
+    // Remarks column
+    worksheet.mergeCells(headerRow1, col + 1, headerRow2, col + 1);
+    worksheet.getCell(headerRow1, col + 1).value = "Remarks";
+    worksheet.getCell(headerRow1, col + 1).font = { bold: true };
+    worksheet.getCell(headerRow1, col + 1).alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+    worksheet.getCell(headerRow1, col + 1).border = {
+      top: { style: 'thin' },
+      left: { style: 'thin' },
+      bottom: { style: 'thin' },
+      right: { style: 'thin' }
+    };
+    worksheet.getColumn(col + 1).width = 40;
+
+    worksheet.views = [{ state: "frozen", ySplit: headerRow2, xSplit: 2, topLeftCell: "C12", activeCell: "C12" }];
+
+    const dateKey = (d) => moment(d).format("DD-MM-YYYY");
+    let rowIndex = 12;
+    users.forEach((user) => {
+      const row = worksheet.getRow(rowIndex);
+      row.getCell(1).value = `KUN-${institution.shortName.toUpperCase() || ""}-${user.employeeNo}`;
+      row.getCell(2).value = user.name.toUpperCase(); // Convert name to ALL CAPS
+
+      // Add borders to employee number and name cells
+      row.getCell(1).border = row.getCell(2).border = {
+        top: { style: 'thin' },
+        left: { style: 'thin' },
+        bottom: { style: 'thin' },
+        right: { style: 'thin' }
+      };
+
+      const attendanceMap = new Map();
+      user.attendance.forEach((att) => {
+        attendanceMap.set(dateKey(att.date), {
+          in: att.firstCheckIn ? moment(att.firstCheckIn).tz("Asia/Kolkata").format("HH:mm") : "",
+          out: att.lastCheckOut ? moment(att.lastCheckOut).tz("Asia/Kolkata").format("HH:mm") : "",
+        });
+      });
+
+      let colCursor = 3;
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dKey = moment(new Date(now.getFullYear(), now.getMonth(), d)).format("DD-MM-YYYY");
+        const attData = attendanceMap.get(dKey) || { in: "", out: "" };
+
+        row.getCell(colCursor).value = attData.in;
+        row.getCell(colCursor).border = {
+          top: { style: 'thin' },
+          left: { style: 'thin' },
+          bottom: { style: 'thin' },
+          right: { style: 'thin' }
+        };
+
+        row.getCell(colCursor + 1).value = attData.out;
+        row.getCell(colCursor + 1).border = {
+          top: { style: 'thin' },
+          left: { style: 'thin' },
+          bottom: { style: 'thin' },
+          right: { style: 'thin' }
+        };
+
+        colCursor += 2;
+      }
+
+      // Status and Remarks cells with borders
+      row.getCell(colCursor).value = ""; // Status empty
+      row.getCell(colCursor).border = {
+        top: { style: 'thin' },
+        left: { style: 'thin' },
+        bottom: { style: 'thin' },
+        right: { style: 'thin' }
+      };
+
+      row.getCell(colCursor + 1).value = ""; // Remarks empty
+      row.getCell(colCursor + 1).border = {
+        top: { style: 'thin' },
+        left: { style: 'thin' },
+        bottom: { style: 'thin' },
+        right: { style: 'thin' }
+      };
+
+      row.height = 20;
+      row.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+      rowIndex++;
+    });
+
+    const excelFileName = `attendance_${institutionId}_${Date.now()}.xlsx`;
+    const excelFilePath = path.join(reportsDir, excelFileName);
+    await workbook.xlsx.writeFile(excelFilePath);
+
+    // =========================== PDF Status Report ===========================
+    const pdfStatusFileName = `attendance_status_${institutionId}_${Date.now()}.pdf`;
+    const pdfStatusFilePath = path.join(reportsDir, pdfStatusFileName);
+
+    const usersFormatted = users.map(user => {
+      const attMap = {};
+      user.attendance.forEach(att => {
+        attMap[moment(att.date).date()] = {
+          in: att.firstCheckIn ? moment(att.firstCheckIn).tz("Asia/Kolkata").format("HH:mm") : "",
+          out: att.lastCheckOut ? moment(att.lastCheckOut).tz("Asia/Kolkata").format("HH:mm") : "",
+          status: att.firstCheckIn || att.lastCheckOut ? "P" : "",
+        };
+      });
+      return {
+        employeeNo: `KUN-${institution.shortName.toUpperCase() || ""}-${user.employeeNo}`,
+        name: user.name.toUpperCase(), // Convert name to ALL CAPS
+        attendance: attMap,
+      };
+    });
+
+    await new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ margin: 10, size: "A3", layout: "landscape" });
+      const stream = fs.createWriteStream(pdfStatusFilePath);
+      doc.pipe(stream);
+
+      const left = 40;
+      const topMargin = 100;
+      const bottomMargin = 70;
+      const rowHeight = 20;
+      const colEmployeeNoWidth = 100;
+      const colNameWidth = 140;
+      const colDateWidth = 45;
+      const colRemarksWidth = 300; // Large remarks column
+
+      const pageWidth = doc.page.width - left * 2;
+      const fixedWidth = colEmployeeNoWidth + colNameWidth + colRemarksWidth;
+      // const maxDateColsPerPage = Math.floor((pageWidth - fixedWidth) / (colDateWidth * 3));
+      const maxDateColsPerPage = 5;
+      const dateChunks = [];
+      for (let i = 1; i <= daysInMonth; i += maxDateColsPerPage) {
+        dateChunks.push({ start: i, end: Math.min(i + maxDateColsPerPage - 1, daysInMonth) });
+      }
+
+      function drawHeader(x, y, startDay, endDay) {
+        let currentX = x;
+        doc.fontSize(10).font("Helvetica-Bold");
+        doc.fillColor("white");
+
+        // Employee No
+        doc.rect(currentX, y, colEmployeeNoWidth, rowHeight * 2).fill("#8B4513").fillColor("white");
+        doc.text("Employee No", currentX, y + 6, { width: colEmployeeNoWidth, align: "center" });
+        currentX += colEmployeeNoWidth;
+
+        // Employee Name
+        doc.rect(currentX, y, colNameWidth, rowHeight * 2).fill("#8B4513").fillColor("white");
+        doc.text("Employee Name", currentX, y + 6, { width: colNameWidth, align: "center" });
+        currentX += colNameWidth;
+
+        // Daywise columns
+        for (let d = startDay; d <= endDay; d++) {
+          const dateStr = moment(new Date(now.getFullYear(), now.getMonth(), d)).format("DD-MM-YYYY");
+          doc.rect(currentX, y, colDateWidth * 3, rowHeight).fill("#8B4513").fillColor("white");
+          doc.text(dateStr, currentX, y + 6, { width: colDateWidth * 3, align: "center" });
+
+          ["In", "Out", "Status"].forEach((label) => {
+            doc.rect(currentX, y + rowHeight, colDateWidth, rowHeight).fill("#8B4513").fillColor("white");
+            doc.text(label, currentX, y + rowHeight + 6, { width: colDateWidth, align: "center" });
+            currentX += colDateWidth;
+          });
+        }
+
+        // Remarks column
+        doc.rect(currentX, y, colRemarksWidth, rowHeight * 2).fill("#8B4513").fillColor("white");
+        doc.text("Remarks", currentX, y + 12, { width: colRemarksWidth, align: "center" });
+
+        doc.fillColor("black");
+      }
+
+      function drawRow(x, y, startDay, endDay, user, isOdd) {
+        let currentX = x;
+        const totalWidth = colEmployeeNoWidth + colNameWidth + colDateWidth * 3 * (endDay - startDay + 1) + colRemarksWidth;
+
+        // Background color for odd rows
+        if (isOdd) {
+          doc.rect(x, y, totalWidth, rowHeight)
+            .fill("#F8F8F8")
+            .fillColor("black");
+        }
+
+        // Draw grid lines for all cells
+        doc.lineWidth(0.5);
+        doc.strokeColor("#000000");
+
+        // Employee No cell
+        doc.rect(currentX, y, colEmployeeNoWidth, rowHeight).stroke();
+        doc.fontSize(10);
+        doc.text(user.employeeNo, currentX + 5, y + 6, { width: colEmployeeNoWidth - 10, align: "center" });
+        currentX += colEmployeeNoWidth;
+
+        // Name cell
+        doc.rect(currentX, y, colNameWidth, rowHeight).stroke();
+        doc.text(user.name, currentX + 5, y + 6, { width: colNameWidth - 10, align: "left" });
+        currentX += colNameWidth;
+
+        // Date cells
+        for (let d = startDay; d <= endDay; d++) {
+          const att = user.attendance[d] || { in: "", out: "", status: "" };
+
+          // In cell
+          doc.rect(currentX, y, colDateWidth, rowHeight).stroke();
+          doc.text(att.in, currentX + 5, y + 6, { width: colDateWidth - 10, align: "center" });
+          currentX += colDateWidth;
+
+          // Out cell
+          doc.rect(currentX, y, colDateWidth, rowHeight).stroke();
+          doc.text(att.out, currentX + 5, y + 6, { width: colDateWidth - 10, align: "center" });
+          currentX += colDateWidth;
+
+          // Status cell
+          doc.rect(currentX, y, colDateWidth, rowHeight).stroke();
+          doc.font("Helvetica-Bold");
+          doc.text(att.status, currentX + 5, y + 6, { width: colDateWidth - 10, align: "center" });
+          doc.font("Helvetica");
+          currentX += colDateWidth;
+        }
+
+        // Remarks cell (blank)
+        doc.rect(currentX, y, colRemarksWidth, rowHeight).stroke();
+        doc.text("", currentX + 5, y + 6, { width: colRemarksWidth - 10, align: "left" });
+      }
+
+      function drawLegend(doc, left) {
+        const legendY = doc.page.height - 70;
+        doc.fontSize(10).font("Helvetica-Bold").text("Status Codes:", left, legendY, { align: "left" });
+        doc.fontSize(10).text(
+          "P = Present   A = Absent   OD = On Duty   L = Leave   H = Holiday   PER = Permission   HD = Half Day",
+          left, legendY + 15, { align: "left" }
+        );
+      }
+
+      let pageNumber = 0;
+      for (const chunk of dateChunks) {
+        if (pageNumber > 0) doc.addPage();
+
+        // Logo & Title
+        if (fs.existsSync(logoPath)) doc.image(logoPath, (doc.page.width - 50) / 2, 20, { width: 50, height: 50 });
+        doc.fontSize(14).font("Helvetica-Bold").text(institution.name, 100, 80, { align: "center" });
+        doc.fontSize(10).font("Helvetica").text(
+          `Attendance Status Report for ${now.toLocaleString("default", { month: "long" })} ${now.getFullYear()}`,
+          100, 100, { align: "center" }
+        );
+
+        let y = topMargin;
+        drawHeader(left, y, chunk.start, chunk.end);
+        y += rowHeight * 2;
+
+        const maxRowsPerPage = 30; // 22 users per page
+        let rowCount = 0;
+
+        for (const user of usersFormatted) {
+          if (rowCount >= maxRowsPerPage) {
+            drawLegend(doc, left);
+            doc.addPage();
+            y = topMargin;
+            drawHeader(left, y, chunk.start, chunk.end);
+            y += rowHeight * 2;
+            rowCount = 0;
+          }
+          drawRow(left, y, chunk.start, chunk.end, user, rowCount % 2 === 1);
+          y += rowHeight;
+          rowCount++;
+        }
+
+        drawLegend(doc, left);
+        pageNumber++;
+      }
+
+      doc.end();
+      stream.on("finish", resolve);
+      stream.on("error", reject);
+    });
+
+    res.json({
+      success: true,
+      data: usersFormatted,
+      excelDownload: `/reports/${excelFileName}`,
+      pdfDownloadStatus: `/reports/${pdfStatusFileName}`,
+    });
+
+  } catch (error) {
+    console.error("Error fetching users with attendance:", error);
+    res.status(500).json({ success: false, message: "Error fetching users with attendance" });
+  }
+}
+
+
+export async function getUsersWithDailyAttendance(req, res) {
+  try {
+    const { institutionId } = req.params;
+    const { date } = req.query;
+    // Get institution-specific models
+    const { models } = req.institutionDb;
+
+    const targetDate = date ? new Date(date) : new Date();
+
+    const startOfDay = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), 0, 0, 0);
+    const endOfDay = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), 23, 59, 59);
+
+    // Fetch users with attendance for that day using institution-specific User model
+    let users = await models.User.aggregate([
+      { $match: { institutionId: new mongoose.Types.ObjectId(institutionId) } },
+      {
+        $lookup: {
+          from: "attendances",
+          let: { empNo: "$employeeNo", instId: "$institutionId" },
+          pipeline: [
+            {
+              $match: {
+                $expr: { $and: [{ $eq: ["$employeeNo", "$$empNo"] }, { $eq: ["$institutionId", "$$instId"] }] },
+                timestamp: { $gte: startOfDay, $lte: endOfDay },
+              },
+            },
+            {
+              $group: {
+                _id: null,
+                firstCheckIn: { $min: "$timestamp" },
+                lastCheckOut: { $max: "$timestamp" },
+              },
+            },
+            {
+              $project: { _id: 0, firstCheckIn: 1, lastCheckOut: 1 },
+            },
+          ],
+          as: "attendance",
+        },
+      },
+    ]);
+
+    const institution = await Institution.findById(institutionId);
+
+    // Define times for attendance marking
+    const reportingTime = new Date(targetDate);
+    reportingTime.setHours(9, 0, 0, 0);
+
+    const noonTime = new Date(targetDate);
+    noonTime.setHours(12, 0, 0, 0);
+
+    const halfDayEnd = new Date(targetDate);
+    halfDayEnd.setHours(16, 30, 0, 0); // 4:30 PM
+
+
+
+
+    users.forEach(user => {
+      const att = user.attendance[0];
+      if (!att) {
+        user.lateBy = "";
+        user.status = "AB / ______________"; // Absent
+      } else {
+        const checkIn = new Date(att.firstCheckIn);
+        const checkOut = new Date(att.lastCheckOut);
+
+        const reportingTime = new Date(targetDate);
+        reportingTime.setHours(9, 0, 0, 0);
+
+        const noonTime = new Date(targetDate);
+        noonTime.setHours(12, 0, 0, 0);
+
+        const halfDayEnd = new Date(targetDate);
+        halfDayEnd.setHours(16, 30, 0, 0); // 4:30 PM
+
+        // Check exact match for 9:00 (allow slight tolerance 1 min if needed)
+        const isOnTime = Math.abs(checkIn - reportingTime) < 60000; // 1 min tolerance
+
+        const isLate = checkIn > reportingTime && !isOnTime;
+        const isHalfDay = (checkIn >= noonTime) || (checkOut <= halfDayEnd);
+
+        user.lateBy = isLate ? Math.floor((checkIn - reportingTime) / 60000) + " mins" : "";
+
+        if (isOnTime && isHalfDay) {
+          user.status = "P/HD";
+        } else if (isOnTime) {
+          user.status = "P";
+        } else if (isLate && isHalfDay) {
+          user.status = "PL/HD";
+        } else if (isLate) {
+          user.status = "PL";
+        } else {
+          // Leave check placeholder
+          if (user.leaveDays && user.leaveDays.includes(targetDate.toISOString().split("T")[0])) {
+            user.status = "L";
+          } else {
+            user.status = "P"; // fallback present
+          }
+        }
+      }
+    });
+
+    const reportsDir = path.join(process.cwd(), "public", "reports");
+    if (!fs.existsSync(reportsDir)) fs.mkdirSync(reportsDir, { recursive: true });
+
+    const formattedDate = targetDate.toISOString().split("T")[0];
+
+    // =========================== Excel Report ===========================
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Daily Attendance");
+
+    worksheet.mergeCells("A1:G1");
+    worksheet.getCell("A1").value = `${institution.name} - Attendance Report`;
+    worksheet.getCell("A1").font = { size: 14, bold: true };
+    worksheet.getCell("A1").alignment = { horizontal: "center" };
+
+    worksheet.mergeCells("A2:G2");
+    worksheet.getCell("A2").value = `Date: ${formattedDate}`;
+    worksheet.getCell("A2").alignment = { horizontal: "center" };
+
+    worksheet.addRow(["Employee No", "Name", "Check-In", "Check-Out", "Late By", "Status", "Remarks"]).eachCell(cell => {
+      cell.font = { bold: true };
+      cell.alignment = { horizontal: "center" };
+      cell.border = {
+        top: { style: 'thin' },
+        bottom: { style: 'thin' },
+        left: { style: 'thin' },
+        right: { style: 'thin' }
+      };
+    });
+
+    users.forEach(user => {
+      const att = user.attendance[0] || {};
+      worksheet.addRow([
+        `KUN-${institution.shortName.toUpperCase()}-${user.employeeNo}`,
+        user.name.toUpperCase(),
+        att.firstCheckIn ? moment(att.firstCheckIn).tz("Asia/Kolkata").format("HH:mm") : "",
+        att.lastCheckOut ? moment(att.lastCheckOut).tz("Asia/Kolkata").format("HH:mm") : "",
+        user.lateBy || "",
+        user.status || "",
+        "" // remarks field for admin input or notes
+      ]);
+    });
+
+    const excelFileName = `attendance_${institutionId}_${formattedDate}.xlsx`;
+    const excelFilePath = path.join(reportsDir, excelFileName);
+    await workbook.xlsx.writeFile(excelFilePath);
+
+    // =========================== PDF Report ===========================
+    const pdfFileName = `attendance_${institutionId}_${formattedDate}.pdf`;
+    const pdfFilePath = path.join(reportsDir, pdfFileName);
+
+    await new Promise((resolve, reject) => {
+      const doc = new PDFDocument({
+        margin: 30,
+        size: 'A3',
+        layout: 'landscape',
+      });
+
+      const stream = fs.createWriteStream(pdfFilePath);
+      doc.pipe(stream);
+
+      // Add logo if available
+      try {
+        const imgPath = path.join(process.cwd(), 'public', 'logo.png');
+        if (fs.existsSync(imgPath)) {
+          const logoImage = fs.readFileSync(imgPath);
+          const imgWidth = 80;
+          const imgHeight = 80;
+          const x = (doc.page.width - imgWidth) / 2;
+          const y = 30;
+          doc.image(logoImage, x, y, { width: imgWidth, height: imgHeight });
+          doc.moveDown(6);
+        }
+      } catch (e) {
+        console.warn("Logo image error:", e);
+      }
+
+      doc.fontSize(14).font('Helvetica-Bold').text(institution.name, { align: 'center' });
+      doc.fontSize(10).text(`Attendance Report - ${formattedDate}`, { align: 'center' });
+      doc.moveDown();
+
+      const tableTop = 150;
+      const rowHeight = 20;
+      const bottomMargin = 80;
+      const left = 50;
+      const colWidths = [120, 220, 120, 120, 120, 120, 300]; // wider remarks column
+      const headers = ['Employee No', 'Name', 'Check-In', 'Check-Out', 'Late By', 'Status', 'Remarks'];
+
+      // Draw header row
+      let x = left;
+      headers.forEach((header, i) => {
+        doc.rect(x, tableTop, colWidths[i], rowHeight)
+          .fill('#8B4513')
+          .stroke()
+          .fillColor('white')
+          .text(header, x + 5, tableTop + 5, { width: colWidths[i] - 10, align: 'center' });
+        x += colWidths[i];
+      });
+
+      doc.fillColor('black');
+      let y = tableTop + rowHeight;
+
+      // Rows data
+      users.forEach((user) => {
+        if (y + rowHeight > doc.page.height - bottomMargin) {
+          // Print legend before page break
+          doc.fontSize(10).text(
+            "P = Present   A = Absent   PL = Present but Late   PL/HD = Present, Late, Half Day   HD = Half Day   OD = On Duty   L = Leave   H = Holiday   PER = Permission",
+            left, y + 15, { align: 'left' }
+          );
+          doc.addPage({ size: 'A3', layout: 'landscape', margin: 30 });
+          y = tableTop;
+
+          // Redraw headers on new page
+          x = left;
+          headers.forEach((header, i) => {
+            doc.rect(x, y, colWidths[i], rowHeight)
+              .fill('#8B4513')
+              .stroke()
+              .fillColor('white')
+              .text(header, x + 5, y + 5, { width: colWidths[i] - 10, align: 'center' });
+            x += colWidths[i];
+          });
+          doc.fillColor('black');
+          y += rowHeight;
+        }
+
+        const att = user.attendance[0] || {};
+        const row = [
+          `KUN-${institution.shortName.toUpperCase()}-${user.employeeNo}`,
+          user.name.toUpperCase(),
+          att.firstCheckIn ? moment(att.firstCheckIn).tz('Asia/Kolkata').format('HH:mm') : '',
+          att.lastCheckOut ? moment(att.lastCheckOut).tz('Asia/Kolkata').format('HH:mm') : '',
+          user.lateBy || '',
+          user.status || '',
+          '' // remarks field (admin can edit post-generation)
+        ];
+
+        x = left;
+        row.forEach((text, i) => {
+          doc.rect(x, y, colWidths[i], rowHeight)
+            .stroke()
+            .fillColor('black')
+            .text(text, x + 5, y + 5, { width: colWidths[i] - 10, align: 'center' });
+          x += colWidths[i];
+        });
+        y += rowHeight;
+      });
+
+      // Final legend at bottom of last page
+      doc.fontSize(10).text(
+        "P = Present   A = Absent   PL = Present but Late   PL/HD = Present, Late, Half Day   HD = Half Day   OD = On Duty   L = Leave   H = Holiday   PER = Permission",
+        left, y + 15, { align: 'left' }
+      );
+
+      doc.end();
+      stream.on('finish', resolve);
+      stream.on('error', reject);
+    });
+
+    res.json({
+      success: true,
+      message: `Attendance for ${formattedDate} fetched`,
+      excelDownload: `/reports/${excelFileName}`,
+      pdfDownload: `/reports/${pdfFileName}`,
+    });
+  } catch (error) {
+    console.error("Error fetching attendance:", error);
+    res.status(500).json({ success: false, message: "Error fetching attendance" });
+  }
+}
+
+
+async function getUsersWithMonthlyAttendanceSummary(req, res) {
+  try {
+    const { institutionId } = req.params;
+    const { month, year } = req.query;
+    // Get institution-specific models
+    const { models } = req.institutionDb;
+
+    if (!month || !year) {
+      return res.status(400).json({ success: false, message: "Month and Year required" });
+    }
+
+    const startDate = moment(`${year}-${month}-01`).startOf('month').toDate();
+    const endDate = moment(startDate).endOf('month').toDate();
+
+    const institution = await Institution.findById(institutionId);
+    if (!institution) {
+      return res.status(404).json({ success: false, message: "Institution not found" });
+    }
+
+    // Use institution-specific User model
+    const users = await models.User.find({ institutionId }).lean();
+
+    // Use institution-specific Attendance model
+    const attendanceAggregate = await models.Attendance.aggregate([
+      {
+        $match: {
+          institutionId: new mongoose.Types.ObjectId(institutionId),
+          timestamp: { $gte: startDate, $lte: endDate },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            employeeNo: "$employeeNo",
+            date: { $dateToString: { format: "%Y-%m-%d", date: "$timestamp" } }
+          },
+          firstCheckIn: { $min: "$timestamp" },
+          lastCheckOut: { $max: "$timestamp" }
+        }
+      }
+    ]);
+
+    // Map attendance by user and date for quick lookup
+    const attendanceMap = {};
+    attendanceAggregate.forEach(a => {
+      if (!attendanceMap[a._id.employeeNo]) attendanceMap[a._id.employeeNo] = {};
+      attendanceMap[a._id.employeeNo][a._id.date] = {
+        firstCheckIn: a.firstCheckIn,
+        lastCheckOut: a.lastCheckOut,
+      };
+    });
+
+    // Mark Sundays and second Saturdays as leave
+    const daysInMonth = moment(startDate).daysInMonth();
+    const sundays = [];
+    const secondSaturdays = [];
+    for (let d = 1; d <= daysInMonth; d++) {
+      const date = moment(`${year}-${month}-${d}`, "YYYY-MM-DD");
+      if (date.day() === 0) sundays.push(date.format("YYYY-MM-DD"));
+      if (date.day() === 6 && d >= 8 && d <= 14) secondSaturdays.push(date.format("YYYY-MM-DD"));
+    }
+
+    // Calculate total working days
+    const totalDaysInMonth = daysInMonth;
+    const totalWeekendDays = sundays.length + secondSaturdays.length;
+    const totalWorkingDays = totalDaysInMonth - totalWeekendDays;
+
+    // Reporting time constants
+    const reportingTime = moment(`${year}-${month}-01 09:00:00`);
+    const noonTime = moment(`${year}-${month}-01 12:00:00`);
+    const halfDayEnd = moment(`${year}-${month}-01 16:30:00`);
+    const today = moment().startOf('day');
+
+    // Prepare summaries
+    const summaries = users.map(user => {
+      let totalPresent = 0, totalAbsent = 0, totalLeave = 0, totalHalfDay = 0, totalLate = 0;
+
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dateStr = moment(`${year}-${month}-${d}`, "YYYY-MM-DD").format("YYYY-MM-DD");
+
+        // Skip future dates beyond today
+        if (moment(dateStr).isAfter(today)) {
+          continue;
+        }
+
+        if (sundays.includes(dateStr) || secondSaturdays.includes(dateStr)) {
+          totalLeave++;
+          continue;
+        }
+        if (user.leaveDays && user.leaveDays.includes(dateStr) && moment(dateStr).isSameOrBefore(today)) {
+          totalLeave++;
+          continue;
+        }
+        const att = attendanceMap[user.employeeNo]?.[dateStr];
+        if (!att) {
+          totalAbsent++;
+          continue;
+        }
+
+        const checkIn = moment(att.firstCheckIn);
+        const checkOut = moment(att.lastCheckOut);
+
+        const isLate = checkIn.isAfter(reportingTime);
+        const isHalfDay = checkIn.isSameOrAfter(noonTime) || checkOut.isSameOrBefore(halfDayEnd);
+
+        if (isLate) totalLate++;
+        if (isHalfDay) totalHalfDay++;
+        if (!isHalfDay && !isLate) totalPresent++;
+        else if (isHalfDay && !isLate) totalHalfDay++;
+      }
+
+      // Convert every 3 late days to 1 half day leave
+      const lateHalfDayLeave = Math.floor(totalLate / 3);
+      totalHalfDay += lateHalfDayLeave;
+
+      return {
+        employeeNo: user.employeeNo,
+        name: user.name,
+        present: totalPresent,
+        absent: totalAbsent,
+        leave: totalLeave,
+        halfDay: totalHalfDay,
+        late: totalLate,
+        totalWorkingDays: totalWorkingDays,
+        statusSummary: `P:${totalPresent} A:${totalAbsent} L:${totalLeave} HD:${totalHalfDay} PL(Late):${totalLate}`,
+      };
+    });
+
+    // Save reports folder
+    const reportsDir = path.join(process.cwd(), "public", "reports");
+    if (!fs.existsSync(reportsDir)) fs.mkdirSync(reportsDir, { recursive: true });
+
+    const reportLabel = `${month}_${year}`;
+    const excelFileName = `monthly_attendance_${institutionId}_${reportLabel}.xlsx`;
+    const excelFilePath = path.join(reportsDir, excelFileName);
+    const pdfFileName = `monthly_attendance_${institutionId}_${reportLabel}.pdf`;
+    const pdfFilePath = path.join(reportsDir, pdfFileName);
+
+    // Excel Report
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Monthly Attendance");
+
+    worksheet.mergeCells("A1:H1");
+    worksheet.getCell("A1").value = `${institution.name} - Monthly Attendance Summary`;
+    worksheet.getCell("A1").font = { size: 14, bold: true };
+    worksheet.getCell("A1").alignment = { horizontal: "center" };
+
+    worksheet.mergeCells("A2:H2");
+    worksheet.getCell("A2").value = `Month: ${month} - Year: ${year}    Total Working Days: ${totalWorkingDays}`;
+    worksheet.getCell("A2").font = { bold: true };
+    worksheet.getCell("A2").alignment = { horizontal: "center" };
+
+    worksheet.addRow(['Employee No', 'Name', 'Present', 'Absent', 'Leave', 'Half Day', 'Late', 'Working Days']).eachCell(cell => {
+      cell.font = { bold: true };
+      cell.alignment = { horizontal: "center" };
+      cell.border = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } };
+    });
+
+    summaries.forEach(sum => {
+      worksheet.addRow([sum.employeeNo, sum.name.toUpperCase(), sum.present, sum.absent, sum.leave, sum.halfDay, sum.late, sum.totalWorkingDays]);
+    });
+
+    await workbook.xlsx.writeFile(excelFilePath);
+
+    // PDF Report
+    await new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ size: 'A3', layout: 'landscape', margin: 30 });
+      const stream = fs.createWriteStream(pdfFilePath);
+      doc.pipe(stream);
+
+      try {
+        const imgPath = path.join(process.cwd(), 'public', 'logo.png');
+        if (fs.existsSync(imgPath)) {
+          const logo = fs.readFileSync(imgPath);
+          const imgWidth = 70;
+          const imgHeight = 70;
+          doc.image(logo, (doc.page.width - imgWidth) / 2, 30, { width: imgWidth, height: imgHeight });
+          doc.moveDown(6);
+        }
+      } catch { }
+
+      doc.fontSize(14).font('Helvetica-Bold').text(`${institution.name} - Monthly Attendance Summary`, { align: 'center' });
+      doc.fontSize(12).text(`Month: ${month} - Year: ${year}`, { align: 'center' });
+      doc.fontSize(12).text(`Total Working Days: ${totalWorkingDays}`, { align: 'center' });
+      doc.moveDown();
+
+      const headers = ['Employee No', 'Name', 'Present', 'Absent', 'Leave', 'Half Day', 'Late', 'Working Days'];
+      const colWidths = [120, 250, 80, 80, 80, 80, 80, 100];
+      const rowHeight = 20;
+      let x = 50; let y = 180;
+      const bottomMargin = 70;
+
+      // Draw headers
+      headers.forEach((header, idx) => {
+        doc.rect(x, y, colWidths[idx], rowHeight).fill('#8B4513').stroke();
+        doc.fillColor('white').text(header, x + 5, y + 5, { width: colWidths[idx] - 10, align: 'center' });
+        x += colWidths[idx];
+      });
+
+      y += rowHeight;
+      doc.fillColor('black');
+
+      // Draw rows
+      summaries.forEach(sum => {
+        if (y + rowHeight > doc.page.height - bottomMargin) {
+          doc.addPage();
+          y = 50;
+          x = 50;
+          headers.forEach((header, idx) => {
+            doc.rect(x, y, colWidths[idx], rowHeight).fill('#8B4513').stroke();
+            doc.fillColor('white').text(header, x + 5, y + 5, { width: colWidths[idx] - 10, align: 'center' });
+            x += colWidths[idx];
+          });
+          y += rowHeight;
+          doc.fillColor('black');
+        }
+        x = 50;
+        [
+          sum.employeeNo,
+          sum.name.toUpperCase(),
+          sum.present,
+          sum.absent,
+          sum.leave,
+          sum.halfDay,
+          sum.late,
+          sum.totalWorkingDays
+        ].forEach((text, idx) => {
+          doc.rect(x, y, colWidths[idx], rowHeight).stroke();
+          doc.text(String(text), x + 5, y + 5, { width: colWidths[idx] - 10, align: 'center' });
+          x += colWidths[idx];
+        });
+        y += rowHeight;
+      });
+
+      // Legend
+      doc.fontSize(10).text(
+        "P = Present   A = Absent   PL = Present but Late   PL/HD = Present, Late Half Day   HD = Half Day   OD = On Duty   L = Leave   H = Holiday   PER = Permission",
+        50, y + 15, { align: 'left' }
+      );
+
+      doc.end();
+      stream.on('finish', resolve);
+      stream.on('error', reject);
+    });
+
+    res.json({
+      success: true,
+      month,
+      year,
+      excelDownload: `/reports/${excelFileName}`,
+      pdfDownload: `/reports/${pdfFileName}`,
+      summaries
+    });
+  } catch (error) {
+    console.error("Monthly attendance summary error:", error);
+    res.status(500).json({ success: false, message: "Failed to generate monthly attendance summary" });
+  }
+}
+
+
+async function getUsersWithMonthlyDailyStatusSummary(req, res) {
+  try {
+    const { institutionId } = req.params;
+    const { month, year } = req.query;
+    // Get institution-specific models and institution from middleware
+    const { models, institution } = req.institutionDb;
+
+    if (!month || !year) {
+      return res.status(400).json({ success: false, message: "Month and Year required" });
+    }
+
+    const startDate = moment(`${year}-${month}-01`).startOf('month').toDate();
+    const endDate = moment(startDate).endOf('month').toDate();
+
+    if (!institution) {
+      return res.status(404).json({ success: false, message: "Institution not found" });
+    }
+    
+    console.log(`Processing monthly daily status for institution: ${institution.name}, month: ${month}, year: ${year}`);
+
+    // Use institution-specific User model
+    const users = await models.User.find({ institutionId }).lean();
+    console.log(`Found ${users.length} users for institution ${institutionId}`);
+
+    // Use institution-specific Attendance model
+    console.log(`Searching for attendance records between ${startDate.toISOString()} and ${endDate.toISOString()}`);
+    const attendanceAggregate = await models.Attendance.aggregate([
+      {
+        $match: {
+          institutionId: new mongoose.Types.ObjectId(institutionId),
+          timestamp: { $gte: startDate, $lte: endDate },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            employeeNo: "$employeeNo",
+            date: { $dateToString: { format: "%Y-%m-%d", date: "$timestamp" } }
+          },
+          firstCheckIn: { $min: "$timestamp" },
+          lastCheckOut: { $max: "$timestamp" }
+        }
+      }
+    ]);
+    
+    console.log(`Found ${attendanceAggregate.length} attendance records`);
+
+    const attendanceMap = {};
+    attendanceAggregate.forEach(a => {
+      if (!attendanceMap[a._id.employeeNo]) attendanceMap[a._id.employeeNo] = {};
+      attendanceMap[a._id.employeeNo][a._id.date] = {
+        firstCheckIn: a.firstCheckIn,
+        lastCheckOut: a.lastCheckOut,
+      };
+    });
+
+    const daysInMonth = moment(startDate).daysInMonth();
+
+    const sundays = [];
+    const secondSaturdays = [];
+    for (let d = 1; d <= daysInMonth; d++) {
+      const date = moment(`${year}-${month}-${d}`, "YYYY-MM-DD");
+      if (date.day() === 0) sundays.push(date.format("YYYY-MM-DD"));
+      if (date.day() === 6 && d >= 8 && d <= 14) secondSaturdays.push(date.format("YYYY-MM-DD"));
+    }
+
+    const totalDaysInMonth = daysInMonth;
+    const totalWeekendDays = sundays.length + secondSaturdays.length;
+    const totalWorkingDays = totalDaysInMonth - totalWeekendDays;
+    const today = moment().startOf('day');
+
+    const reportingTime = moment(`${year}-${month}-01 09:00:00`);
+    const noonTime = moment(`${year}-${month}-01 12:00:00`);
+    const halfDayEnd = moment(`${year}-${month}-01 16:30:00`);
+
+    const daysPerPage = 15;
+    const pdfColWidthDays = 45;
+    const pdfColWidthTotals = 25;
+    const pdfColWidthEmpNo = 120;
+    const pdfColWidthName = 200;
+
+    console.log(`Generating summaries for ${users.length} users with ${Object.keys(attendanceMap).length} attendance records`);
+    const summaries = users.map(user => {
+      let totalPresent = 0, totalAbsent = 0, totalLeave = 0, totalHalfDay = 0, totalLate = 0;
+      let dailyStatus = {};
+
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dateStr = moment(`${year}-${month}-${d}`, "YYYY-MM-DD").format("YYYY-MM-DD");
+
+        if (moment(dateStr).isAfter(today)) {
+          dailyStatus[dateStr] = "-";
+          continue;
+        }
+
+        if (sundays.includes(dateStr) || secondSaturdays.includes(dateStr)) {
+          dailyStatus[dateStr] = "L";
+          totalLeave++;
+          continue;
+        }
+
+        if (user.leaveDays && user.leaveDays.includes(dateStr)) {
+          dailyStatus[dateStr] = "L";
+          totalLeave++;
+          continue;
+        }
+
+        const att = attendanceMap[user.employeeNo]?.[dateStr];
+        if (!att) {
+          dailyStatus[dateStr] = "A";
+          totalAbsent++;
+          continue;
+        }
+
+        const checkIn = moment(att.firstCheckIn);
+        const checkOut = moment(att.lastCheckOut);
+        const isLate = checkIn.isAfter(reportingTime);
+        const isHalfDay = checkIn.isSameOrAfter(noonTime) || checkOut.isSameOrBefore(halfDayEnd);
+
+        if (isLate) totalLate++;
+        if (isHalfDay) totalHalfDay++;
+
+        if (isLate && isHalfDay) dailyStatus[dateStr] = "PL/HD";
+        else if (isLate) dailyStatus[dateStr] = "PL";
+        else if (isHalfDay) dailyStatus[dateStr] = "HD";
+        else {
+          dailyStatus[dateStr] = "P";
+          totalPresent++;
+        }
+      }
+
+      const lateHalfDayLeave = Math.floor(totalLate / 3);
+      totalHalfDay += lateHalfDayLeave;
+
+      return {
+        employeeNo: user.employeeNo,
+        name: user.name,
+        dailyStatus,
+        totalPresent,
+        totalAbsent,
+        totalLeave,
+        totalHalfDay,
+        totalLate,
+        totalWorkingDays,
+      };
+    });
+
+    const reportsDir = path.join(process.cwd(), "public", "reports");
+    if (!fs.existsSync(reportsDir)) fs.mkdirSync(reportsDir, { recursive: true });
+
+    const reportLabel = `${month}_${year}`;
+    const excelFileName = `monthly_daily_status_${institutionId}_${reportLabel}.xlsx`;
+    const excelFilePath = path.join(reportsDir, excelFileName);
+    const pdfFileName = `monthly_daily_status_${institutionId}_${reportLabel}.pdf`;
+    const pdfFilePath = path.join(reportsDir, pdfFileName);
+
+    // Excel report
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Monthly Daily Status");
+
+    worksheet.mergeCells("A1:" + String.fromCharCode(65 + daysInMonth + 7) + "1");
+    worksheet.getCell("A1").value = `${institution.name} - Monthly Daily Attendance Status`;
+    worksheet.getCell("A1").font = { size: 14, bold: true };
+    worksheet.getCell("A1").alignment = { horizontal: "center" };
+
+    worksheet.mergeCells("A2:" + String.fromCharCode(65 + daysInMonth + 7) + "2");
+    worksheet.getCell("A2").value = `Month: ${month} - Year: ${year}  | Total Working Days: ${totalWorkingDays}`;
+    worksheet.getCell("A2").alignment = { horizontal: "center" };
+    worksheet.getCell("A2").font = { bold: true };
+
+    let headerRow = ['Employee No', 'Name'];
+    for (let d = 1; d <= daysInMonth; d++) {
+      headerRow.push(d.toString());
+    }
+    headerRow.push('P', 'A', 'L', 'HD', 'LT', 'WD');
+
+    worksheet.addRow(headerRow).eachCell((cell, colNumber) => {
+      cell.font = { bold: true };
+      cell.alignment = { horizontal: "center" };
+      cell.border = {
+        top: { style: 'thin' }, bottom: { style: 'thin' },
+        left: { style: 'thin' }, right: { style: 'thin' }
+      };
+      if (colNumber === 1) {
+        cell.alignment = { horizontal: 'left' };
+      }
+    });
+
+    summaries.forEach(user => {
+      const row = [];
+      row[0] = `KUN-${institution.shortName.toUpperCase() || ""}-${user.employeeNo}`;
+      row[1] = user.name.toUpperCase();
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dateStr = moment(`${year}-${month}-${d}`, "YYYY-MM-DD").format("YYYY-MM-DD");
+        row.push(user.dailyStatus[dateStr] || '-');
+      }
+      row.push(user.totalPresent, user.totalAbsent, user.totalLeave, user.totalHalfDay, user.totalLate, user.totalWorkingDays);
+
+      const addRow = worksheet.addRow(row);
+      addRow.getCell(1).alignment = { horizontal: 'left' };
+    });
+
+    await workbook.xlsx.writeFile(excelFilePath);
+
+    // PDF generation with pagination every 15 days
+    await new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ size: 'A3', layout: 'landscape', margin: 30 });
+      const stream = fs.createWriteStream(pdfFilePath);
+      doc.pipe(stream);
+
+      try {
+        const imgPath = path.join(process.cwd(), 'public', 'logo.png');
+        if (fs.existsSync(imgPath)) {
+          const logo = fs.readFileSync(imgPath);
+          const imgWidth = 80;
+          const imgHeight = 80;
+          doc.image(logo, (doc.page.width - imgWidth) / 2, 30, { width: imgWidth, height: imgHeight });
+          doc.moveDown(6);
+        }
+      } catch (e) { }
+
+      doc.fontSize(14).font('Helvetica-Bold').text(`${institution.name} - Monthly Daily Attendance Status`, { align: 'center' });
+      doc.fontSize(12).text(`Month: ${month} - Year: ${year}`, { align: 'center' });
+      doc.fontSize(12).text(`Total Working Days: ${totalWorkingDays}`, { align: 'center' });
+      doc.moveDown();
+
+      const leftMargin = 30;
+      const rowHeight = 20;
+
+      let y = 160;
+
+      for (let pageStartDay = 1; pageStartDay <= daysInMonth; pageStartDay += daysPerPage) {
+        if (pageStartDay !== 1) {
+          doc.addPage();
+          y = 50;
+        }
+
+        let x = leftMargin;
+        const pageEndDay = Math.min(pageStartDay + daysPerPage - 1, daysInMonth);
+
+        const headers = ['Employee No', 'Name'];
+        for (let d = pageStartDay; d <= pageEndDay; d++) {
+          headers.push(d.toString());
+        }
+        headers.push('P', 'A', 'L', 'HD', 'LT', 'WD');
+
+        const colWidths = [];
+        colWidths.push(pdfColWidthEmpNo);
+        colWidths.push(pdfColWidthName);
+        for (let i = 0; i < (pageEndDay - pageStartDay + 1); i++) colWidths.push(pdfColWidthDays);
+        for (let i = 0; i < 6; i++) colWidths.push(pdfColWidthTotals);
+
+        headers.forEach((header, i) => {
+          doc.rect(x, y, colWidths[i], rowHeight).fill('#8B4513').stroke();
+          doc.fillColor('white').text(header, x + 2, y + 5, { width: colWidths[i] - 4, align: 'center' });
+          x += colWidths[i];
+        });
+        y += rowHeight;
+        doc.fillColor('black');
+
+        summaries.forEach(user => {
+          if (y + rowHeight > doc.page.height - 70) {
+            doc.addPage();
+            y = 50;
+            x = leftMargin;
+            headers.forEach((header, i) => {
+              doc.rect(x, y, colWidths[i], rowHeight).fill('#8B4513').stroke();
+              doc.fillColor('white').text(header, x + 2, y + 5, { width: colWidths[i] - 4, align: 'center' });
+              x += colWidths[i];
+            });
+            y += rowHeight;
+            doc.fillColor('black');
+          }
+
+          x = leftMargin;
+          const empNoFormatted = `KUN-${institution.shortName.toUpperCase() || ""}-${user.employeeNo}`;
+          const rowData = [empNoFormatted, user.name.toUpperCase()];
+
+          for (let d = pageStartDay; d <= pageEndDay; d++) {
+            const dateStr = moment(`${year}-${month}-${d}`, "YYYY-MM-DD").format("YYYY-MM-DD");
+            rowData.push(user.dailyStatus[dateStr] || '-');
+          }
+
+          rowData.push(user.totalPresent, user.totalAbsent, user.totalLeave, user.totalHalfDay, user.totalLate, user.totalWorkingDays);
+
+          rowData.forEach((text, idx) => {
+            doc.rect(x, y, colWidths[idx], rowHeight).stroke();
+            doc.text(String(text), x + 2, y + 5, { width: colWidths[idx] - 4, align: 'center' });
+            x += colWidths[idx];
+          });
+
+          y += rowHeight;
+        });
+      }
+
+      doc.fontSize(10).text(
+        "P = Present   A = Absent   L = Leave   HD = Half Day   LT = Late   WD = Working Days",
+        leftMargin, y + 15, { align: 'left' }
+      );
+
+      doc.end();
+      stream.on('finish', resolve);
+      stream.on('error', reject);
+    });
+
+    res.json({
+      success: true,
+      month,
+      year,
+      excelDownload: `/reports/${excelFileName}`,
+      pdfDownload: `/reports/${pdfFileName}`,
+      summaries
+    });
+
+  } catch (error) {
+    console.error("Error generating monthly daily summary: ", error);
+    res.status(500).json({ success: false, message: "Failed to generate monthly daily summary" });
+  }
+}
+export default { addUser, listUsers, createDeviceUser, importUsersFromDevice, pushUserToDevice, getUsersWithCurrentMonthAttendance, getUsersWithDailyAttendance, getUsersWithMonthlyAttendanceSummary, getUsersWithMonthlyDailyStatusSummary };

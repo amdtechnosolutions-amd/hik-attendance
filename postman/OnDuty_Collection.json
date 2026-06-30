@@ -1,0 +1,316 @@
+{
+	"info": {
+		"_postman_id": "a1b2c3d4-e5f6-g7h8-i9j0-k1l2m3n4o5p6",
+		"name": "Faculty On Duty Management",
+		"description": "Collection for testing On Duty functionality for faculty members",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Authentication",
+			"item": [
+				{
+					"name": "Login",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"pm.environment.set(\"token\", jsonData.token);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"{{admin_email}}\",\n    \"password\": \"{{admin_password}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/login",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"auth",
+								"login"
+							]
+						},
+						"description": "Login to get authentication token"
+					},
+					"response": []
+				}
+			],
+			"description": "Authentication endpoints"
+		},
+		{
+			"name": "On Duty Management",
+			"item": [
+				{
+					"name": "Create On Duty Record",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"startDate\": \"2023-11-15T00:00:00.000Z\",\n    \"endDate\": \"2023-11-17T23:59:59.999Z\",\n    \"description\": \"Faculty attending conference at Delhi University\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/institutions/{{institution_id}}/users/{{user_id}}/on-duty",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"institutions",
+								"{{institution_id}}",
+								"users",
+								"{{user_id}}",
+								"on-duty"
+							]
+						},
+						"description": "Create a new On Duty record for a faculty member"
+					},
+					"response": []
+				},
+				{
+					"name": "Get User On Duty Records",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/institutions/{{institution_id}}/users/{{user_id}}/on-duty",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"institutions",
+								"{{institution_id}}",
+								"users",
+								"{{user_id}}",
+								"on-duty"
+							]
+						},
+						"description": "Get all On Duty records for a specific user"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Institution On Duty Records",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/institutions/{{institution_id}}/on-duty?startDate=2023-11-01&endDate=2023-11-30",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"institutions",
+								"{{institution_id}}",
+								"on-duty"
+							],
+							"query": [
+								{
+									"key": "startDate",
+									"value": "2023-11-01",
+									"description": "Optional filter for start date"
+								},
+								{
+									"key": "endDate",
+									"value": "2023-11-30",
+									"description": "Optional filter for end date"
+								}
+							]
+						},
+						"description": "Get all On Duty records for an institution with optional date filtering"
+					},
+					"response": []
+				},
+				{
+					"name": "Update On Duty Record",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"startDate\": \"2023-11-15T00:00:00.000Z\",\n    \"endDate\": \"2023-11-18T23:59:59.999Z\",\n    \"description\": \"Faculty attending conference and workshop at Delhi University\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/institutions/{{institution_id}}/on-duty/{{on_duty_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"institutions",
+								"{{institution_id}}",
+								"on-duty",
+								"{{on_duty_id}}"
+							]
+						},
+						"description": "Update an existing On Duty record"
+					},
+					"response": []
+				},
+				{
+					"name": "Delete On Duty Record",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/institutions/{{institution_id}}/on-duty/{{on_duty_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"institutions",
+								"{{institution_id}}",
+								"on-duty",
+								"{{on_duty_id}}"
+							]
+						},
+						"description": "Delete an On Duty record"
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints for managing On Duty records"
+		},
+		{
+			"name": "Reports",
+			"item": [
+				{
+					"name": "Get Monthly Daily Status Report",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/institutions/{{institution_id}}/monthly-daily-attendance-status?month=11&year=2023",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"institutions",
+								"{{institution_id}}",
+								"monthly-daily-attendance-status"
+							],
+							"query": [
+								{
+									"key": "month",
+									"value": "11",
+									"description": "Month number (1-12)"
+								},
+								{
+									"key": "year",
+									"value": "2023",
+									"description": "Year (e.g., 2023)"
+								}
+							]
+						},
+						"description": "Get monthly daily status report with On Duty status included"
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints for generating reports that include On Duty status"
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:3000/api",
+			"type": "string"
+		},
+		{
+			"key": "institution_id",
+			"value": "your_institution_id",
+			"type": "string"
+		},
+		{
+			"key": "user_id",
+			"value": "faculty_user_id",
+			"type": "string"
+		},
+		{
+			"key": "on_duty_id",
+			"value": "on_duty_record_id",
+			"type": "string"
+		},
+		{
+			"key": "admin_email",
+			"value": "admin@example.com",
+			"type": "string"
+		},
+		{
+			"key": "admin_password",
+			"value": "your_password",
+			"type": "string"
+		}
+	]
+}
