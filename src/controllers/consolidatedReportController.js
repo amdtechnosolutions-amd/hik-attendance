@@ -1054,6 +1054,429 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// NEW: Consolidated monthly report WITH actual IN/OUT times per day
+// Route: GET /institutions/:institutionId/consolidated-monthly-report-with-time
+// Params: same as existing report — ?month=&year= OR ?startDate=&endDate=
+// Does NOT affect the existing report function at all.
+// ═══════════════════════════════════════════════════════════════════════════
+export async function getConsolidatedMonthlyReportWithTime(req, res) {
+  let excelFilePath = null;
+  let pdfFilePath   = null;
+
+  try {
+    const { institutionId } = req.params;
+    const { month, year, startDate: qs, endDate: qe } = req.query;
+    const { models, institution } = req.institutionDb;
+
+    /* ── date range ── */
+    let startDate, endDate, monthName, label, monthNum, yearNum;
+
+    if (qs && qe) {
+      startDate = moment.tz(qs, 'Asia/Kolkata').startOf('day').toDate();
+      endDate   = moment.tz(qe, 'Asia/Kolkata').endOf('day').toDate();
+      if (startDate > endDate) return res.status(400).json({ success: false, message: 'startDate > endDate' });
+      monthName = `${moment(startDate).format('DD MMM YYYY')} to ${moment(endDate).format('DD MMM YYYY')}`;
+      label     = `${moment(startDate).format('YYYYMMDD')}_${moment(endDate).format('YYYYMMDD')}`;
+      monthNum  = moment(startDate).month() + 1;
+      yearNum   = moment(startDate).year();
+    } else if (month && year) {
+      monthNum  = Number(month);
+      yearNum   = Number(year);
+      if (isNaN(monthNum) || monthNum < 1 || monthNum > 12)
+        return res.status(400).json({ success: false, message: 'Invalid month' });
+      if (isNaN(yearNum) || yearNum < 2000 || yearNum > 2100)
+        return res.status(400).json({ success: false, message: 'Invalid year' });
+      startDate = moment(`${yearNum}-${String(monthNum).padStart(2,'0')}-01`).startOf('month').toDate();
+      endDate   = moment(startDate).endOf('month').toDate();
+      monthName = moment(startDate).format('MMMM YYYY');
+      label     = `${monthNum}_${yearNum}`;
+    } else {
+      return res.status(400).json({ success: false, message: 'Provide month+year or startDate+endDate' });
+    }
+
+    /* ── date list ── */
+    const dateList = [];
+    for (let d = moment(startDate); d.isSameOrBefore(moment(endDate), 'day'); d.add(1, 'day')) {
+      dateList.push(d.format('YYYY-MM-DD'));
+    }
+
+    /* ── weekends / holidays ── */
+    const sundays = [], secondSaturdays = [];
+    dateList.forEach(ds => {
+      const day = moment(ds).day(), dom = moment(ds).date();
+      if (day === 0) sundays.push(ds);
+      if (day === 6 && dom >= 8 && dom <= 14) secondSaturdays.push(ds);
+    });
+
+    let holidayDateSet = new Set();
+    try {
+      const holidays = await models.Holiday?.find({ date: { $gte: startDate, $lte: endDate } }).lean() || [];
+      holidays.forEach(h => holidayDateSet.add(moment(h.date).format('YYYY-MM-DD')));
+    } catch {}
+
+    const workingDates = dateList.filter(d =>
+      !sundays.includes(d) && !secondSaturdays.includes(d) && !holidayDateSet.has(d)
+    );
+
+    /* ── fetch data ── */
+    const [users, attendanceAggregate, onDutyRecords, leaveRecords] = await Promise.all([
+      models.User.find({}).sort({ seniorityNo: 1 }).lean(),
+      models.Attendance.aggregate([
+        { $match: { timestamp: { $gte: startDate, $lte: endDate } } },
+        { $group: {
+            _id: { employeeNo: '$employeeNo', date: { $dateToString: { format: '%Y-%m-%d', date: '$timestamp', timezone: 'Asia/Kolkata' } } },
+            firstCheckIn:  { $min: '$timestamp' },
+            lastCheckOut:  { $max: '$timestamp' },
+            punchCount:    { $sum: 1 }
+        }}
+      ]),
+      models.OnDuty.find({ $or: [
+        { startDate: { $gte: startDate, $lte: endDate } },
+        { endDate:   { $gte: startDate, $lte: endDate } },
+        { $and: [{ startDate: { $lte: startDate } }, { endDate: { $gte: endDate } }] }
+      ]}).lean(),
+      models.Leave.find({ institutionId, status: 'approved', leaveDate: { $gte: startDate, $lte: endDate } }).lean()
+    ]);
+
+    /* ── build maps ── */
+    const attendanceMap = {};
+    attendanceAggregate.forEach(a => {
+      if (!attendanceMap[a._id.employeeNo]) attendanceMap[a._id.employeeNo] = {};
+      const hasRealOut = a.punchCount > 1 && a.lastCheckOut?.getTime() !== a.firstCheckIn?.getTime();
+      attendanceMap[a._id.employeeNo][a._id.date] = {
+        firstCheckIn:  a.firstCheckIn,
+        lastCheckOut:  hasRealOut ? a.lastCheckOut : null
+      };
+    });
+
+    const onDutyMap = {};
+    onDutyRecords.forEach(r => {
+      const s = new Date(Math.max(r.startDate, startDate));
+      const e = new Date(Math.min(r.endDate,   endDate));
+      for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
+        const ds = moment(d).format('YYYY-MM-DD');
+        if (!onDutyMap[r.employeeNo]) onDutyMap[r.employeeNo] = {};
+        onDutyMap[r.employeeNo][ds] = r.description;
+      }
+    });
+
+    const leaveMap = {};
+    leaveRecords.forEach(l => {
+      const ds = moment(l.leaveDate).format('YYYY-MM-DD');
+      if (!leaveMap[l.employeeNo]) leaveMap[l.employeeNo] = {};
+      leaveMap[l.employeeNo][ds] = l.type;
+    });
+
+    const today = moment().startOf('day');
+
+    /* ── build userData ── */
+    const userData = users.map(user => {
+      const dailyData = [];
+
+      for (const dateStr of dateList) {
+        const cur = moment(dateStr, 'YYYY-MM-DD');
+        let status = '', checkIn = '', checkOut = '';
+
+        if (cur.isAfter(today)) {
+          status = '-';
+        } else if (sundays.includes(dateStr) || secondSaturdays.includes(dateStr)) {
+          status = 'WH';
+        } else if (holidayDateSet.has(dateStr)) {
+          status = onDutyMap[user.employeeNo]?.[dateStr] ? 'OD' : 'H';
+        } else if (leaveMap[user.employeeNo]?.[dateStr] === 'maternity' ||
+            (user.employeeNo.includes('033') && cur.isBetween('2026-01-07','2026-07-07','day','[]'))) {
+          status = 'MTL';
+        } else if (user.leaveDays?.includes(dateStr) || leaveMap[user.employeeNo]?.[dateStr]) {
+          status = 'L';
+        } else if (onDutyMap[user.employeeNo]?.[dateStr]) {
+          status = 'OD';
+        } else {
+          const att = attendanceMap[user.employeeNo]?.[dateStr];
+          if (att) {
+            status   = 'P';
+            checkIn  = moment(att.firstCheckIn).tz('Asia/Kolkata').format('HH:mm');
+            checkOut = att.lastCheckOut
+              ? moment(att.lastCheckOut).tz('Asia/Kolkata').format('HH:mm')
+              : '';
+          } else {
+            status = 'A';
+          }
+        }
+
+        dailyData.push({ date: dateStr, day: cur.date(), status, checkIn, checkOut });
+      }
+
+      return { employeeNo: user.employeeNo, name: user.name, dailyData };
+    });
+
+    /* ══════════════════════════════════════════
+       EXCEL — two rows per day (IN / OUT)
+       Columns: Faculty ID | Name | d1-IN | d1-OUT | d2-IN | d2-OUT …
+       ══════════════════════════════════════════ */
+    const reportsDir = path.join(process.cwd(), 'public', 'reports');
+    if (!fs.existsSync(reportsDir)) fs.mkdirSync(reportsDir, { recursive: true });
+
+    const excelFileName = `consolidated_time_report_${institutionId}_${label}.xlsx`;
+    excelFilePath = path.join(reportsDir, excelFileName);
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Time Report');
+
+    const totalCols = 2 + workingDates.length * 2;
+
+    // Row 1: title
+    ws.mergeCells(1, 1, 1, totalCols);
+    Object.assign(ws.getCell(1, 1), {
+      value: `${institution.name} - Attendance Report with Time`,
+      font:  { bold: true, size: 13 },
+      alignment: { horizontal: 'center' }
+    });
+
+    // Row 2: month label
+    ws.mergeCells(2, 1, 2, totalCols);
+    Object.assign(ws.getCell(2, 1), {
+      value: monthName,
+      font:  { bold: true, size: 11 },
+      alignment: { horizontal: 'center' }
+    });
+
+    // Row 3: date header groups (merge IN+OUT per date)
+    ws.getCell(3, 1).value = 'Faculty ID';
+    ws.getCell(3, 2).value = 'Name';
+    workingDates.forEach((ds, i) => {
+      const col = 3 + i * 2;
+      ws.mergeCells(3, col, 3, col + 1);
+      const cell = ws.getCell(3, col);
+      cell.value = moment(ds).format('DD');
+      cell.alignment = { horizontal: 'center' };
+      cell.font = { bold: true };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '8B4513' } };
+      cell.font = { bold: true, color: { argb: 'FFFFFF' } };
+    });
+
+    // Row 4: IN / OUT sub-headers
+    ws.getCell(4, 1).value = 'Faculty ID';
+    ws.getCell(4, 2).value = 'Name';
+    workingDates.forEach((_, i) => {
+      const col = 3 + i * 2;
+      const inCell  = ws.getCell(4, col);
+      const outCell = ws.getCell(4, col + 1);
+      inCell.value  = 'IN';
+      outCell.value = 'OUT';
+      [inCell, outCell].forEach(c => {
+        c.font      = { bold: true, color: { argb: 'FFFFFF' } };
+        c.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'A0522D' } };
+        c.alignment = { horizontal: 'center' };
+        c.border    = { top:{style:'thin'}, left:{style:'thin'}, bottom:{style:'thin'}, right:{style:'thin'} };
+      });
+    });
+    ['A3','B3','A4','B4'].forEach(addr => {
+      const c = ws.getCell(addr);
+      c.font      = { bold: true, color: { argb: 'FFFFFF' } };
+      c.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: '8B4513' } };
+      c.alignment = { horizontal: 'center' };
+      c.border    = { top:{style:'thin'}, left:{style:'thin'}, bottom:{style:'thin'}, right:{style:'thin'} };
+    });
+
+    // Column widths
+    ws.getColumn(1).width = 14;
+    ws.getColumn(2).width = 28;
+    workingDates.forEach((_, i) => {
+      ws.getColumn(3 + i * 2).width     = 7;
+      ws.getColumn(3 + i * 2 + 1).width = 7;
+    });
+
+    // Data rows
+    const statusColors = { OD:'CCFFCC', H:'EEEEEE', WH:'DDDDFF', A:'FFCCCC', L:'FFE4B5', MTL:'FFD700' };
+
+    userData.forEach((user, idx) => {
+      const rowNum = 5 + idx;
+      const empId  = `${institution.shortName?.toUpperCase() || ''}-${user.employeeNo}`;
+      ws.getCell(rowNum, 1).value = empId;
+      ws.getCell(rowNum, 2).value = user.name.toUpperCase();
+
+      workingDates.forEach((ds, i) => {
+        const col   = 3 + i * 2;
+        const day   = user.dailyData.find(d => d.date === ds);
+        const inC   = ws.getCell(rowNum, col);
+        const outC  = ws.getCell(rowNum, col + 1);
+
+        if (day) {
+          if (day.status === 'P') {
+            inC.value  = day.checkIn  || '';
+            outC.value = day.checkOut || '';
+          } else {
+            // Merge status label across IN+OUT columns
+            ws.mergeCells(rowNum, col, rowNum, col + 1);
+            inC.value = day.status;
+            inC.alignment = { horizontal: 'center' };
+            const bg = statusColors[day.status];
+            if (bg) {
+              inC.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+              outC.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+            }
+          }
+        }
+
+        [inC, outC].forEach(c => {
+          c.alignment = { horizontal: 'center' };
+          c.border    = { top:{style:'thin'}, left:{style:'thin'}, bottom:{style:'thin'}, right:{style:'thin'} };
+          c.font      = { size: 8 };
+        });
+      });
+
+      // Alternate row shading
+      if (idx % 2 === 1) {
+        [ws.getCell(rowNum, 1), ws.getCell(rowNum, 2)].forEach(c =>
+          c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'F8F8F8' } }
+        );
+      }
+      [ws.getCell(rowNum,1), ws.getCell(rowNum,2)].forEach(c => {
+        c.border = { top:{style:'thin'}, left:{style:'thin'}, bottom:{style:'thin'}, right:{style:'thin'} };
+      });
+    });
+
+    await wb.xlsx.writeFile(excelFilePath);
+
+    /* ══════════════════════════════════════════
+       PDF — landscape, one row per employee,
+       columns: Name | d1 IN | d1 OUT | d2 IN …
+       ══════════════════════════════════════════ */
+    const pdfFileName = `consolidated_time_report_${institutionId}_${label}.pdf`;
+    pdfFilePath = path.join(reportsDir, pdfFileName);
+
+    await new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ margin: 20, size: 'A3', layout: 'landscape' });
+      const stream = fs.createWriteStream(pdfFilePath);
+      doc.pipe(stream);
+
+      const margin      = 20;
+      const pageW       = doc.page.width  - margin * 2;
+      const nameW       = 140;
+      const empW        = 80;
+      const dateW       = Math.max(28, Math.floor((pageW - nameW - empW) / workingDates.length));
+      const inW         = Math.floor(dateW / 2);
+      const outW        = dateW - inW;
+      const rowH        = 18;
+      const headerH     = 34;
+
+      const drawHeaders = () => {
+        let y = doc.y;
+
+        // Title
+        doc.fontSize(11).font('Helvetica-Bold')
+          .text(`${institution.name} – Attendance Report with In/Out Times`, margin, y, { width: pageW, align: 'center' });
+        y += 16;
+        doc.fontSize(9).font('Helvetica')
+          .text(monthName, margin, y, { width: pageW, align: 'center' });
+        y += 14;
+
+        // Column headers
+        let x = margin;
+        const fillHdr = (text, cx, cw, h) => {
+          doc.rect(cx, y, cw, h).fillAndStroke('#8B4513', '#8B4513');
+          doc.fillColor('white').fontSize(7).font('Helvetica-Bold')
+            .text(text, cx + 1, y + (h - 7) / 2, { width: cw - 2, align: 'center' });
+          doc.fillColor('black');
+        };
+        fillHdr('Faculty ID',  x,          empW,  headerH); x += empW;
+        fillHdr('Name',        x,          nameW, headerH); x += nameW;
+
+        workingDates.forEach(ds => {
+          const label = moment(ds).format('DD');
+          // Date label spans both IN+OUT
+          doc.rect(x, y, inW + outW, headerH / 2).fillAndStroke('#A0522D','#A0522D');
+          doc.fillColor('white').fontSize(7).font('Helvetica-Bold')
+            .text(label, x + 1, y + 3, { width: inW + outW - 2, align: 'center' });
+          doc.fillColor('black');
+          // IN / OUT sub-labels
+          const subY = y + headerH / 2;
+          ['IN','OUT'].forEach((lbl, li) => {
+            const subX = x + li * inW;
+            doc.rect(subX, subY, li === 0 ? inW : outW, headerH / 2).fillAndStroke('#A0522D','#A0522D');
+            doc.fillColor('white').fontSize(6).font('Helvetica-Bold')
+              .text(lbl, subX + 1, subY + 2, { width: (li === 0 ? inW : outW) - 2, align: 'center' });
+            doc.fillColor('black');
+          });
+          x += inW + outW;
+        });
+
+        return y + headerH;
+      };
+
+      let y = drawHeaders();
+
+      userData.forEach((user, idx) => {
+        if (y + rowH > doc.page.height - margin - 20) {
+          doc.addPage({ size: 'A3', layout: 'landscape', margin: 20 });
+          y = drawHeaders();
+        }
+
+        const bg = idx % 2 === 0 ? '#FFFFFF' : '#F8F8F8';
+        let x = margin;
+
+        const cell = (text, cx, cw, color) => {
+          doc.rect(cx, y, cw, rowH).fillAndStroke(color || bg, '#CCCCCC');
+          doc.fillColor('black').fontSize(6.5).font('Helvetica')
+            .text(String(text || ''), cx + 1, y + (rowH - 6.5) / 2, { width: cw - 2, align: 'center', lineBreak: false });
+        };
+
+        const empId = `${institution.shortName?.toUpperCase() || ''}-${user.employeeNo}`;
+        cell(empId,       x, empW);  x += empW;
+        doc.rect(x, y, nameW, rowH).fillAndStroke(bg, '#CCCCCC');
+        doc.fillColor('black').fontSize(6.5).font('Helvetica')
+          .text(user.name.toUpperCase(), x + 2, y + (rowH - 6.5) / 2, { width: nameW - 4, lineBreak: false });
+        x += nameW;
+
+        const colorMap = { OD:'#CCFFCC', H:'#EEEEEE', WH:'#DDDDFF', A:'#FFCCCC', L:'#FFE4B5', MTL:'#FFD700' };
+
+        workingDates.forEach(ds => {
+          const day = user.dailyData.find(d => d.date === ds);
+          if (day && day.status === 'P') {
+            cell(day.checkIn  || '', x,      inW);
+            cell(day.checkOut || '', x+inW,  outW);
+          } else {
+            const label = day?.status || '-';
+            const color = colorMap[label] || bg;
+            doc.rect(x, y, inW + outW, rowH).fillAndStroke(color, '#CCCCCC');
+            doc.fillColor('black').fontSize(6.5).font('Helvetica-Bold')
+              .text(label, x + 1, y + (rowH - 6.5) / 2, { width: inW + outW - 2, align: 'center', lineBreak: false });
+          }
+          x += inW + outW;
+        });
+
+        y += rowH;
+      });
+
+      doc.end();
+      stream.on('finish', resolve);
+      stream.on('error', reject);
+    });
+
+    /* ── response ── */
+    res.json({
+      success:       true,
+      month:         monthNum,
+      year:          yearNum,
+      monthName,
+      totalDays:     workingDates.length,
+      excelDownload: `/reports/${excelFileName}`,
+      pdfDownload:   `/reports/${pdfFileName}`,
+      userData        // includes dailyData[].{ date, day, status, checkIn, checkOut }
+    });
+
+  } catch (err) {
+    console.error('Time-report error:', err);
+    try {
+      if (excelFilePath && fs.existsSync(excelFilePath)) fs.unlinkSync(excelFilePath);
+      if (pdfFilePath   && fs.existsSync(pdfFilePath))   fs.unlinkSync(pdfFilePath);
+    } catch {}
+    res.status(500).json({ success: false, message: 'Error generating time report', error: err.message });
+  }
+}
+
 export default {
-  getConsolidatedMonthlyAttendanceReport
+  getConsolidatedMonthlyAttendanceReport,
+  getConsolidatedMonthlyReportWithTime
 };

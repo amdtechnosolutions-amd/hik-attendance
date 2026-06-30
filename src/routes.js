@@ -123,6 +123,10 @@ router.get('/institutions/:institutionId/monthly-daily-attendance-status', setup
 // New consolidated monthly attendance report endpoint
 router.get('/institutions/:institutionId/consolidated-monthly-report', setupInstitutionDb, consolidatedReportController.getConsolidatedMonthlyAttendanceReport);
 
+// New consolidated report WITH actual IN/OUT times per day (does not affect the above)
+router.get('/institutions/:institutionId/consolidated-monthly-report-with-time', setupInstitutionDb, consolidatedReportController.getConsolidatedMonthlyReportWithTime);
+
+
 router.post('/institutions/:institutionId/attendance/sync-device', requireAuth, setupInstitutionDb, attendanceController.syncFromDevice);
 router.get('/institutions/:institutionId/attendance/sync-job-status', requireAuth, setupInstitutionDb, attendanceController.getSyncJobStatus);
 router.get('/institutions/:institutionId/attendance/export', requireAuth, setupInstitutionDb, attendanceController.exportAttendanceExcel);
