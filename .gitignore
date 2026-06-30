@@ -20,6 +20,7 @@ backup_temp/
 
 # Generated reports (PDFs, Excel)
 public/reports/
+public/downloads/
 reports/
 
 # Uploads
