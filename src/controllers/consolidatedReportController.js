@@ -1361,18 +1361,29 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
       const rowH        = 18;
       const headerH     = 34;
 
-      const drawHeaders = () => {
-        let y = doc.y;
+      const logoPath = path.join(process.cwd(), 'public', 'logo.png');
+      const hasLogo  = fs.existsSync(logoPath);
 
-        // Title
-        doc.fontSize(11).font('Helvetica-Bold')
-          .text(`${institution.name} – Attendance Report with In/Out Times`, margin, y, { width: pageW, align: 'center' });
-        y += 16;
-        doc.fontSize(9).font('Helvetica')
-          .text(monthName, margin, y, { width: pageW, align: 'center' });
-        y += 14;
+      const drawHeaders = (isFirstPage = false) => {
+        let topY = isFirstPage ? 20 : 20;
 
-        // Column headers
+        // ── Logo (left side) ──
+        if (hasLogo) {
+          doc.image(logoPath, 30, topY, { width: 80, height: 80 });
+        }
+
+        // ── Title text (offset right of logo) ──
+        const textX = hasLogo ? 120 : 30;
+        doc.fontSize(16).font('Helvetica-Bold').fillColor('black')
+          .text(`${institution.name} - Monthly Attendance Report with Time`, textX, topY + 5, { align: 'left' });
+        doc.fontSize(12).font('Helvetica')
+          .text(monthName, textX, topY + 28, { align: 'left' });
+        doc.fontSize(10)
+          .text(`Total Working Days: ${workingDates.length}`, textX, topY + 48, { align: 'left' });
+
+        let y = topY + 90;
+
+        // ── Column headers ──
         let x = margin;
         const fillHdr = (text, cx, cw, h) => {
           doc.rect(cx, y, cw, h).fillAndStroke('#8B4513', '#8B4513');
@@ -1380,23 +1391,24 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
             .text(text, cx + 1, y + (h - 7) / 2, { width: cw - 2, align: 'center' });
           doc.fillColor('black');
         };
-        fillHdr('Faculty ID',  x,          empW,  headerH); x += empW;
-        fillHdr('Name',        x,          nameW, headerH); x += nameW;
+        fillHdr('Faculty ID', x, empW,  headerH); x += empW;
+        fillHdr('Name',       x, nameW, headerH); x += nameW;
 
         workingDates.forEach(ds => {
-          const label = moment(ds).format('DD');
-          // Date label spans both IN+OUT
-          doc.rect(x, y, inW + outW, headerH / 2).fillAndStroke('#A0522D','#A0522D');
+          const lbl = moment(ds).format('DD');
+          // Date label spans IN+OUT
+          doc.rect(x, y, inW + outW, headerH / 2).fillAndStroke('#A0522D', '#A0522D');
           doc.fillColor('white').fontSize(7).font('Helvetica-Bold')
-            .text(label, x + 1, y + 3, { width: inW + outW - 2, align: 'center' });
+            .text(lbl, x + 1, y + 3, { width: inW + outW - 2, align: 'center' });
           doc.fillColor('black');
           // IN / OUT sub-labels
           const subY = y + headerH / 2;
-          ['IN','OUT'].forEach((lbl, li) => {
+          ['IN', 'OUT'].forEach((sub, li) => {
             const subX = x + li * inW;
-            doc.rect(subX, subY, li === 0 ? inW : outW, headerH / 2).fillAndStroke('#A0522D','#A0522D');
+            const subW = li === 0 ? inW : outW;
+            doc.rect(subX, subY, subW, headerH / 2).fillAndStroke('#A0522D', '#A0522D');
             doc.fillColor('white').fontSize(6).font('Helvetica-Bold')
-              .text(lbl, subX + 1, subY + 2, { width: (li === 0 ? inW : outW) - 2, align: 'center' });
+              .text(sub, subX + 1, subY + 2, { width: subW - 2, align: 'center' });
             doc.fillColor('black');
           });
           x += inW + outW;
@@ -1405,7 +1417,8 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
         return y + headerH;
       };
 
-      let y = drawHeaders();
+      let y = drawHeaders(true);
+
 
       userData.forEach((user, idx) => {
         if (y + rowH > doc.page.height - margin - 20) {
