@@ -1195,9 +1195,9 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
           const att = attendanceMap[user.employeeNo]?.[dateStr];
           if (att) {
             status   = 'P';
-            checkIn  = moment(att.firstCheckIn).tz('Asia/Kolkata').format('HH:mm');
+            checkIn  = moment(att.firstCheckIn).tz('Asia/Kolkata').format('h:mm A');
             checkOut = att.lastCheckOut
-              ? moment(att.lastCheckOut).tz('Asia/Kolkata').format('HH:mm')
+              ? moment(att.lastCheckOut).tz('Asia/Kolkata').format('h:mm A')
               : '';
           } else {
             status = 'A';
@@ -1211,8 +1211,10 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
     });
 
     /* ══════════════════════════════════════════
-       EXCEL — two rows per day (IN / OUT)
-       Columns: Faculty ID | Name | d1-IN | d1-OUT | d2-IN | d2-OUT …
+       EXCEL — ONE column per working day
+       Each cell shows:
+         In : h:mm A
+         Out: h:mm A
        ══════════════════════════════════════════ */
     const reportsDir = path.join(process.cwd(), 'public', 'reports');
     if (!fs.existsSync(reportsDir)) fs.mkdirSync(reportsDir, { recursive: true });
@@ -1223,7 +1225,7 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Time Report');
 
-    const totalCols = 2 + workingDates.length * 2;
+    const totalCols = 2 + workingDates.length; // 1 col per date now
 
     // Row 1: title
     ws.mergeCells(1, 1, 1, totalCols);
@@ -1241,100 +1243,74 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
       alignment: { horizontal: 'center' }
     });
 
-    // Row 3: date header groups (merge IN+OUT per date)
-    ws.getCell(3, 1).value = 'Faculty ID';
-    ws.getCell(3, 2).value = 'Name';
-    workingDates.forEach((ds, i) => {
-      const col = 3 + i * 2;
-      ws.mergeCells(3, col, 3, col + 1);
-      const cell = ws.getCell(3, col);
-      cell.value = moment(ds).format('DD');
-      cell.alignment = { horizontal: 'center' };
-      cell.font = { bold: true };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '8B4513' } };
-      cell.font = { bold: true, color: { argb: 'FFFFFF' } };
-    });
+    // Row 3: headers — Faculty ID | Name | DD (one per working date)
+    const hdrStyle = {
+      font: { bold: true, color: { argb: 'FFFFFF' } },
+      fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: '8B4513' } },
+      alignment: { horizontal: 'center', vertical: 'middle', wrapText: true },
+      border: { top:{style:'thin'}, left:{style:'thin'}, bottom:{style:'thin'}, right:{style:'thin'} }
+    };
+    const applyHdr = (cell, value) => { cell.value = value; Object.assign(cell, hdrStyle); };
 
-    // Row 4: IN / OUT sub-headers
-    ws.getCell(4, 1).value = 'Faculty ID';
-    ws.getCell(4, 2).value = 'Name';
-    workingDates.forEach((_, i) => {
-      const col = 3 + i * 2;
-      const inCell  = ws.getCell(4, col);
-      const outCell = ws.getCell(4, col + 1);
-      inCell.value  = 'IN';
-      outCell.value = 'OUT';
-      [inCell, outCell].forEach(c => {
-        c.font      = { bold: true, color: { argb: 'FFFFFF' } };
-        c.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'A0522D' } };
-        c.alignment = { horizontal: 'center' };
-        c.border    = { top:{style:'thin'}, left:{style:'thin'}, bottom:{style:'thin'}, right:{style:'thin'} };
-      });
-    });
-    ['A3','B3','A4','B4'].forEach(addr => {
-      const c = ws.getCell(addr);
-      c.font      = { bold: true, color: { argb: 'FFFFFF' } };
-      c.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: '8B4513' } };
-      c.alignment = { horizontal: 'center' };
-      c.border    = { top:{style:'thin'}, left:{style:'thin'}, bottom:{style:'thin'}, right:{style:'thin'} };
+    applyHdr(ws.getCell(3, 1), 'Faculty ID');
+    applyHdr(ws.getCell(3, 2), 'Name');
+    workingDates.forEach((ds, i) => {
+      applyHdr(ws.getCell(3, 3 + i), moment(ds).format('DD\nMMM'));
     });
 
     // Column widths
     ws.getColumn(1).width = 14;
     ws.getColumn(2).width = 28;
-    workingDates.forEach((_, i) => {
-      ws.getColumn(3 + i * 2).width     = 7;
-      ws.getColumn(3 + i * 2 + 1).width = 7;
-    });
+    workingDates.forEach((_, i) => { ws.getColumn(3 + i).width = 13; });
+
+    // Row height for header
+    ws.getRow(3).height = 28;
 
     // Data rows
     const statusColors = { OD:'CCFFCC', H:'EEEEEE', WH:'DDDDFF', A:'FFCCCC', L:'FFE4B5', MTL:'FFD700' };
 
     userData.forEach((user, idx) => {
-      const rowNum = 5 + idx;
+      const rowNum = 4 + idx;
       const empId  = `${institution.shortName?.toUpperCase() || ''}-${user.employeeNo}`;
-      ws.getCell(rowNum, 1).value = empId;
-      ws.getCell(rowNum, 2).value = user.name.toUpperCase();
+      const rowBg  = idx % 2 === 1 ? 'F8F8F8' : 'FFFFFF';
+
+      const nameCell = ws.getCell(rowNum, 1);
+      nameCell.value = empId;
+      nameCell.border = { top:{style:'thin'}, left:{style:'thin'}, bottom:{style:'thin'}, right:{style:'thin'} };
+      nameCell.font   = { size: 9 };
+      if (idx % 2 === 1) nameCell.fill = { type:'pattern', pattern:'solid', fgColor:{ argb: rowBg } };
+
+      const nm = ws.getCell(rowNum, 2);
+      nm.value  = user.name.toUpperCase();
+      nm.border = { top:{style:'thin'}, left:{style:'thin'}, bottom:{style:'thin'}, right:{style:'thin'} };
+      nm.font   = { size: 9 };
+      if (idx % 2 === 1) nm.fill = { type:'pattern', pattern:'solid', fgColor:{ argb: rowBg } };
 
       workingDates.forEach((ds, i) => {
-        const col   = 3 + i * 2;
-        const day   = user.dailyData.find(d => d.date === ds);
-        const inC   = ws.getCell(rowNum, col);
-        const outC  = ws.getCell(rowNum, col + 1);
+        const c   = ws.getCell(rowNum, 3 + i);
+        const day = user.dailyData.find(d => d.date === ds);
 
-        if (day) {
-          if (day.status === 'P') {
-            inC.value  = day.checkIn  || '';
-            outC.value = day.checkOut || '';
-          } else {
-            // Merge status label across IN+OUT columns
-            ws.mergeCells(rowNum, col, rowNum, col + 1);
-            inC.value = day.status;
-            inC.alignment = { horizontal: 'center' };
-            const bg = statusColors[day.status];
-            if (bg) {
-              inC.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
-              outC.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
-            }
-          }
+        if (day && day.status === 'P') {
+          // Single cell: "In: h:mm A\nOut: h:mm A"
+          const inLine  = day.checkIn  ? `In : ${day.checkIn}` : 'In : --';
+          const outLine = day.checkOut ? `Out: ${day.checkOut}` : 'Out: --';
+          c.value     = `${inLine}\n${outLine}`;
+          c.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+          c.font      = { size: 8 };
+        } else {
+          const label = day?.status || '-';
+          c.value     = label;
+          c.alignment = { horizontal: 'center', vertical: 'middle' };
+          c.font      = { size: 9, bold: true };
+          const bg = statusColors[label];
+          if (bg) c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb: bg } };
         }
 
-        [inC, outC].forEach(c => {
-          c.alignment = { horizontal: 'center' };
-          c.border    = { top:{style:'thin'}, left:{style:'thin'}, bottom:{style:'thin'}, right:{style:'thin'} };
-          c.font      = { size: 8 };
-        });
-      });
-
-      // Alternate row shading
-      if (idx % 2 === 1) {
-        [ws.getCell(rowNum, 1), ws.getCell(rowNum, 2)].forEach(c =>
-          c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'F8F8F8' } }
-        );
-      }
-      [ws.getCell(rowNum,1), ws.getCell(rowNum,2)].forEach(c => {
         c.border = { top:{style:'thin'}, left:{style:'thin'}, bottom:{style:'thin'}, right:{style:'thin'} };
       });
+
+      // Taller rows so two lines fit
+      ws.getRow(rowNum).height = 28;
     });
 
     await wb.xlsx.writeFile(excelFilePath);
@@ -1355,24 +1331,25 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
       const pageW       = doc.page.width  - margin * 2;
       const nameW       = 140;
       const empW        = 80;
-      const dateW       = Math.max(28, Math.floor((pageW - nameW - empW) / workingDates.length));
-      const inW         = Math.floor(dateW / 2);
-      const outW        = dateW - inW;
-      const rowH        = 18;
-      const headerH     = 34;
 
       const logoPath = path.join(process.cwd(), 'public', 'logo.png');
       const hasLogo  = fs.existsSync(logoPath);
 
-      const drawHeaders = (isFirstPage = false) => {
-        let topY = isFirstPage ? 20 : 20;
+      // PDF layout constants — 1 column per day now
+      const colW    = Math.max(34, Math.floor((doc.page.width - margin * 2 - empW - nameW) / workingDates.length));
+      const cellH   = 28;  // taller to fit 2 lines (In / Out)
+      const hdrH    = 20;
 
-        // ── Logo (left side) ──
+
+      const drawHeaders = (isFirstPage = false) => {
+        let topY = 20;
+
+        // ── Logo ──
         if (hasLogo) {
           doc.image(logoPath, 30, topY, { width: 80, height: 80 });
         }
 
-        // ── Title text (offset right of logo) ──
+        // ── Title ──
         const textX = hasLogo ? 120 : 30;
         doc.fontSize(16).font('Helvetica-Bold').fillColor('black')
           .text(`${institution.name} - Monthly Attendance Report with Time`, textX, topY + 5, { align: 'left' });
@@ -1391,37 +1368,21 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
             .text(text, cx + 1, y + (h - 7) / 2, { width: cw - 2, align: 'center' });
           doc.fillColor('black');
         };
-        fillHdr('Faculty ID', x, empW,  headerH); x += empW;
-        fillHdr('Name',       x, nameW, headerH); x += nameW;
+        fillHdr('Faculty ID', x, empW,  hdrH); x += empW;
+        fillHdr('Name',       x, nameW, hdrH); x += nameW;
 
         workingDates.forEach(ds => {
-          const lbl = moment(ds).format('DD');
-          // Date label spans IN+OUT
-          doc.rect(x, y, inW + outW, headerH / 2).fillAndStroke('#A0522D', '#A0522D');
-          doc.fillColor('white').fontSize(7).font('Helvetica-Bold')
-            .text(lbl, x + 1, y + 3, { width: inW + outW - 2, align: 'center' });
-          doc.fillColor('black');
-          // IN / OUT sub-labels
-          const subY = y + headerH / 2;
-          ['IN', 'OUT'].forEach((sub, li) => {
-            const subX = x + li * inW;
-            const subW = li === 0 ? inW : outW;
-            doc.rect(subX, subY, subW, headerH / 2).fillAndStroke('#A0522D', '#A0522D');
-            doc.fillColor('white').fontSize(6).font('Helvetica-Bold')
-              .text(sub, subX + 1, subY + 2, { width: subW - 2, align: 'center' });
-            doc.fillColor('black');
-          });
-          x += inW + outW;
+          fillHdr(moment(ds).format('DD'), x, colW, hdrH);
+          x += colW;
         });
 
-        return y + headerH;
+        return y + hdrH;
       };
 
       let y = drawHeaders(true);
 
-
       userData.forEach((user, idx) => {
-        if (y + rowH > doc.page.height - margin - 20) {
+        if (y + cellH > doc.page.height - margin - 20) {
           doc.addPage({ size: 'A3', layout: 'landscape', margin: 20 });
           y = drawHeaders();
         }
@@ -1429,43 +1390,52 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
         const bg = idx % 2 === 0 ? '#FFFFFF' : '#F8F8F8';
         let x = margin;
 
-        const cell = (text, cx, cw, color) => {
-          doc.rect(cx, y, cw, rowH).fillAndStroke(color || bg, '#CCCCCC');
-          doc.fillColor('black').fontSize(6.5).font('Helvetica')
-            .text(String(text || ''), cx + 1, y + (rowH - 6.5) / 2, { width: cw - 2, align: 'center', lineBreak: false });
-        };
-
-        const empId = `${institution.shortName?.toUpperCase() || ''}-${user.employeeNo}`;
-        cell(empId,       x, empW);  x += empW;
-        doc.rect(x, y, nameW, rowH).fillAndStroke(bg, '#CCCCCC');
+        // Faculty ID cell
+        doc.rect(x, y, empW, cellH).fillAndStroke(bg, '#CCCCCC');
         doc.fillColor('black').fontSize(6.5).font('Helvetica')
-          .text(user.name.toUpperCase(), x + 2, y + (rowH - 6.5) / 2, { width: nameW - 4, lineBreak: false });
+          .text(`${institution.shortName?.toUpperCase() || ''}-${user.employeeNo}`,
+            x + 1, y + (cellH - 6.5) / 2, { width: empW - 2, align: 'center', lineBreak: false });
+        x += empW;
+
+        // Name cell
+        doc.rect(x, y, nameW, cellH).fillAndStroke(bg, '#CCCCCC');
+        doc.fillColor('black').fontSize(6.5).font('Helvetica')
+          .text(user.name.toUpperCase(), x + 2, y + (cellH - 6.5) / 2, { width: nameW - 4, lineBreak: false });
         x += nameW;
 
         const colorMap = { OD:'#CCFFCC', H:'#EEEEEE', WH:'#DDDDFF', A:'#FFCCCC', L:'#FFE4B5', MTL:'#FFD700' };
 
         workingDates.forEach(ds => {
-          const day = user.dailyData.find(d => d.date === ds);
+          const day   = user.dailyData.find(d => d.date === ds);
+          const color = (day && colorMap[day.status]) || bg;
+
+          doc.rect(x, y, colW, cellH).fillAndStroke(color, '#CCCCCC');
+
           if (day && day.status === 'P') {
-            cell(day.checkIn  || '', x,      inW);
-            cell(day.checkOut || '', x+inW,  outW);
+            // Two lines: In / Out
+            const inLine  = `In : ${day.checkIn  || '--'}`;
+            const outLine = `Out: ${day.checkOut || '--'}`;
+            doc.fillColor('black').fontSize(6).font('Helvetica')
+              .text(inLine,  x + 2, y + 3,             { width: colW - 4, lineBreak: false });
+            doc.fillColor('black').fontSize(6).font('Helvetica')
+              .text(outLine, x + 2, y + cellH / 2 + 1, { width: colW - 4, lineBreak: false });
           } else {
             const label = day?.status || '-';
-            const color = colorMap[label] || bg;
-            doc.rect(x, y, inW + outW, rowH).fillAndStroke(color, '#CCCCCC');
-            doc.fillColor('black').fontSize(6.5).font('Helvetica-Bold')
-              .text(label, x + 1, y + (rowH - 6.5) / 2, { width: inW + outW - 2, align: 'center', lineBreak: false });
+            doc.fillColor('black').fontSize(7).font('Helvetica-Bold')
+              .text(label, x + 1, y + (cellH - 7) / 2, { width: colW - 2, align: 'center', lineBreak: false });
           }
-          x += inW + outW;
+
+          x += colW;
         });
 
-        y += rowH;
+        y += cellH;
       });
 
       doc.end();
       stream.on('finish', resolve);
       stream.on('error', reject);
     });
+
 
     /* ── response ── */
     res.json({
