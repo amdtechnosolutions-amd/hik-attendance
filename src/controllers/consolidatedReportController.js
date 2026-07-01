@@ -1195,9 +1195,9 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
           const att = attendanceMap[user.employeeNo]?.[dateStr];
           if (att) {
             status   = 'P';
-            checkIn  = moment(att.firstCheckIn).tz('Asia/Kolkata').format('h:mm A');
+            checkIn  = moment(att.firstCheckIn).tz('Asia/Kolkata').format('h:mmA');
             checkOut = att.lastCheckOut
-              ? moment(att.lastCheckOut).tz('Asia/Kolkata').format('h:mm A')
+              ? moment(att.lastCheckOut).tz('Asia/Kolkata').format('h:mmA')
               : '';
           } else {
             status = 'A';
@@ -1260,8 +1260,8 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
 
     // Column widths
     ws.getColumn(1).width = 14;
-    ws.getColumn(2).width = 28;
-    workingDates.forEach((_, i) => { ws.getColumn(3 + i).width = 17; });
+    ws.getColumn(2).width = 20;   // reduced name column
+    workingDates.forEach((_, i) => { ws.getColumn(3 + i).width = 14; }); // wider date cols
 
     // Row height for header
     ws.getRow(3).height = 28;
