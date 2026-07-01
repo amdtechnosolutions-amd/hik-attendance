@@ -1261,7 +1261,7 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
     // Column widths
     ws.getColumn(1).width = 14;
     ws.getColumn(2).width = 28;
-    workingDates.forEach((_, i) => { ws.getColumn(3 + i).width = 13; });
+    workingDates.forEach((_, i) => { ws.getColumn(3 + i).width = 17; });
 
     // Row height for header
     ws.getRow(3).height = 28;
@@ -1291,12 +1291,12 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
         const day = user.dailyData.find(d => d.date === ds);
 
         if (day && day.status === 'P') {
-          // Single cell: "In: h:mm A\nOut: h:mm A"
-          const inLine  = day.checkIn  ? `In : ${day.checkIn}` : 'In : --';
+          // Single cell: two lines — In then Out
+          const inLine  = day.checkIn  ? `In: ${day.checkIn}`  : 'In: --';
           const outLine = day.checkOut ? `Out: ${day.checkOut}` : 'Out: --';
           c.value     = `${inLine}\n${outLine}`;
           c.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
-          c.font      = { size: 8 };
+          c.font      = { size: 7.5 };
         } else {
           const label = day?.status || '-';
           c.value     = label;
