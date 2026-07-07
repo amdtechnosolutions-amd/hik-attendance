@@ -896,6 +896,8 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'CCFFCC' } }; // Light green
           } else if (dayData.status === "ML/P" || dayData.status === "P/AL") {
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD700' } }; // Gold
+          } else if (dayData.status === "A") {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFCCCC' } }; // Light Red/Pink
           }
         }
       });
@@ -920,7 +922,8 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
       const colorCodes = {
         "OD": "#CCFFCC",
         "ML/P": "#FFD700",
-        "P/AL": "#FFD700"
+        "P/AL": "#FFD700",
+        "A": "#FFCCCC"
       };
 
       // HEADER + LOGO
@@ -971,6 +974,8 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
             doc.rect(x, y, colWidths[idx], rowHeight).fillAndStroke(colorCodes["OD"], "black");
           } else if (idx >= 2 && (row[idx] === "ML/P" || row[idx] === "P/AL")) {
             doc.rect(x, y, colWidths[idx], rowHeight).fillAndStroke(colorCodes[row[idx]], "black");
+          } else if (idx >= 2 && row[idx] === "A") {
+            doc.rect(x, y, colWidths[idx], rowHeight).fillAndStroke(colorCodes["A"], "black");
           } else {
             doc.rect(x, y, colWidths[idx], rowHeight).fillAndStroke(rowColor, "black");
           }
