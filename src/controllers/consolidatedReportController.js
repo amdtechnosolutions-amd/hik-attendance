@@ -772,8 +772,13 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
           status = "L"; totalLeave++;
         } else if (leaveMap[user.employeeNo]?.[dateStr]) {
           const leaveType = leaveMap[user.employeeNo][dateStr];
-          if (leaveType === 'half-day-morning' || leaveType === 'half-day-afternoon') {
+          if (leaveType === 'half-day-morning') {
             status = "ML/P";
+            totalHalfPresent++;
+            totalPresent += 0.5;
+            totalLeave += 0.5;
+          } else if (leaveType === 'half-day-afternoon') {
+            status = "P/AL";
             totalHalfPresent++;
             totalPresent += 0.5;
             totalLeave += 0.5;
@@ -798,6 +803,11 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
           } else {
             if (att.attendanceType === "ML/P") {
               status = "ML/P";
+              totalHalfPresent++;
+              totalPresent += 0.5;
+              totalLeave += 0.5;
+            } else if (att.attendanceType === "P/AL") {
+              status = "P/AL";
               totalHalfPresent++;
               totalPresent += 0.5;
               totalLeave += 0.5;
@@ -884,7 +894,7 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
           const cell = excelRow.getCell(colIndex + 3);
           if (dayData.status === "OD") {
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'CCFFCC' } }; // Light green
-          } else if (dayData.status === "ML/P") {
+          } else if (dayData.status === "ML/P" || dayData.status === "P/AL") {
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD700' } }; // Gold
           }
         }
@@ -909,7 +919,8 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
       doc.pipe(stream);
       const colorCodes = {
         "OD": "#CCFFCC",
-        "ML/P": "#FFD700"
+        "ML/P": "#FFD700",
+        "P/AL": "#FFD700"
       };
 
       // HEADER + LOGO
@@ -958,8 +969,8 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
           doc.strokeColor("black");
           if (idx >= 2 && row[idx] === "OD") {
             doc.rect(x, y, colWidths[idx], rowHeight).fillAndStroke(colorCodes["OD"], "black");
-          } else if (idx >= 2 && row[idx] === "ML/P") {
-            doc.rect(x, y, colWidths[idx], rowHeight).fillAndStroke(colorCodes["ML/P"], "black");
+          } else if (idx >= 2 && (row[idx] === "ML/P" || row[idx] === "P/AL")) {
+            doc.rect(x, y, colWidths[idx], rowHeight).fillAndStroke(colorCodes[row[idx]], "black");
           } else {
             doc.rect(x, y, colWidths[idx], rowHeight).fillAndStroke(rowColor, "black");
           }
@@ -1187,6 +1198,10 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
         } else if (leaveMap[user.employeeNo]?.[dateStr] === 'maternity' ||
             (user.employeeNo.includes('033') && cur.isBetween('2026-01-07','2026-07-07','day','[]'))) {
           status = 'MTL';
+        } else if (leaveMap[user.employeeNo]?.[dateStr] === 'half-day-morning') {
+          status = 'ML/P';
+        } else if (leaveMap[user.employeeNo]?.[dateStr] === 'half-day-afternoon') {
+          status = 'P/AL';
         } else if (user.leaveDays?.includes(dateStr) || leaveMap[user.employeeNo]?.[dateStr]) {
           status = 'L';
         } else if (onDutyMap[user.employeeNo]?.[dateStr]) {
@@ -1267,7 +1282,7 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
     ws.getRow(3).height = 28;
 
     // Data rows
-    const statusColors = { OD:'CCFFCC', H:'EEEEEE', WH:'DDDDFF', A:'FFCCCC', L:'FFE4B5', MTL:'FFD700' };
+    const statusColors = { OD:'CCFFCC', H:'EEEEEE', WH:'DDDDFF', A:'FFCCCC', L:'FFE4B5', MTL:'FFD700', 'ML/P':'FFD700', 'P/AL':'FFD700' };
 
     userData.forEach((user, idx) => {
       const rowNum = 4 + idx;
@@ -1403,7 +1418,7 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
           .text(user.name.toUpperCase(), x + 2, y + (cellH - 6.5) / 2, { width: nameW - 4, lineBreak: false });
         x += nameW;
 
-        const colorMap = { OD:'#CCFFCC', H:'#EEEEEE', WH:'#DDDDFF', A:'#FFCCCC', L:'#FFE4B5', MTL:'#FFD700' };
+        const colorMap = { OD:'#CCFFCC', H:'#EEEEEE', WH:'#DDDDFF', A:'#FFCCCC', L:'#FFE4B5', MTL:'#FFD700', 'ML/P':'#FFD700', 'P/AL':'#FFD700' };
 
         workingDates.forEach(ds => {
           const day   = user.dailyData.find(d => d.date === ds);
