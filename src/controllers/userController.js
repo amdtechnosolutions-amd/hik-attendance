@@ -2191,6 +2191,11 @@ export async function getUsersWithDailyAttendanceList(req, res) {
       let firstCheckIn = null;
       let lastCheckOut = null;
 
+      if (att) {
+        firstCheckIn = att.firstCheckIn;
+        lastCheckOut = att.lastCheckOut;
+      }
+
       const od = onDutyMap[user.employeeNo];
       const leaveType = leaveMap[user.employeeNo];
 
@@ -2225,12 +2230,10 @@ export async function getUsersWithDailyAttendanceList(req, res) {
           status = "L";
         }
       } else if (att) {
-
-        firstCheckIn = att.firstCheckIn;
-        lastCheckOut = att.lastCheckOut;
-
-        // Check if late
-        if (firstCheckIn > lateAfter) {
+        const checkInMoment = moment(firstCheckIn).tz('Asia/Kolkata');
+        if (checkInMoment.hour() >= 12) {
+          status = "ML/P";
+        } else if (firstCheckIn > lateAfter) {
           status = "L";
         } else {
           status = "P";
@@ -2276,6 +2279,11 @@ export async function getUsersWithDailyAttendanceList(req, res) {
       let status = "A"; // Default: Absent
       let lateBy = "";
 
+      if (att) {
+        firstCheckIn = att.firstCheckIn;
+        lastCheckOut = att.lastCheckOut;
+      }
+
       if (od) {
         if (od.type === 'half-day-morning') {
           if (leaveType === 'half-day-afternoon') {
@@ -2318,11 +2326,10 @@ export async function getUsersWithDailyAttendanceList(req, res) {
       }
 
       if (!od && !leaveType && status !== "MTL" && att) {
-        firstCheckIn = att.firstCheckIn;
-        lastCheckOut = att.lastCheckOut;
-
-        // Calculate status
-        if (firstCheckIn > lateAfter) {
+        const checkInMoment = moment(firstCheckIn).tz('Asia/Kolkata');
+        if (checkInMoment.hour() >= 12) {
+          status = "ML/P";
+        } else if (firstCheckIn > lateAfter) {
           status = "L";
           // Calculate "Late By" in minutes
           const workingStart = moment.tz(`${formattedDate} 09:00`, "Asia/Kolkata").toDate();
