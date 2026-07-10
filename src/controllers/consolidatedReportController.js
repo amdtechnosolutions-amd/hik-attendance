@@ -1407,13 +1407,13 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
       const nameCell = ws.getCell(rowNum, 1);
       nameCell.value = empId;
       nameCell.border = { top:{style:'thin'}, left:{style:'thin'}, bottom:{style:'thin'}, right:{style:'thin'} };
-      nameCell.font   = { size: 9 };
+      nameCell.font   = { size: 10.5, bold: true };
       if (idx % 2 === 1) nameCell.fill = { type:'pattern', pattern:'solid', fgColor:{ argb: rowBg } };
 
       const nm = ws.getCell(rowNum, 2);
       nm.value  = user.name.toUpperCase();
       nm.border = { top:{style:'thin'}, left:{style:'thin'}, bottom:{style:'thin'}, right:{style:'thin'} };
-      nm.font   = { size: 9 };
+      nm.font   = { size: 10.5, bold: true };
       if (idx % 2 === 1) nm.fill = { type:'pattern', pattern:'solid', fgColor:{ argb: rowBg } };
 
       workingDates.forEach((ds, i) => {
@@ -1448,14 +1448,14 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
           }
           c.value     = `${inLine}\n${outLine}`;
           c.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
-          c.font      = { size: 7.5, bold: true };
+          c.font      = { size: 9, bold: true };
           const bg = statusColors[day.status];
           if (bg) c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb: bg } };
         } else {
           const label = day?.status || '-';
           c.value     = label;
           c.alignment = { horizontal: 'center', vertical: 'middle' };
-          c.font      = { size: 9, bold: true };
+          c.font      = { size: 11, bold: true };
           const bg = statusColors[label];
           if (bg) c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb: bg } };
         }
@@ -1464,7 +1464,7 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
       });
 
       // Taller rows so two lines fit
-      ws.getRow(rowNum).height = 28;
+      ws.getRow(rowNum).height = 32;
     });
 
     await wb.xlsx.writeFile(excelFilePath);
@@ -1546,15 +1546,15 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
 
         // Faculty ID cell
         doc.rect(x, y, empW, cellH).fillAndStroke(bg, '#CCCCCC');
-        doc.fillColor('black').fontSize(6.5).font('Helvetica')
+        doc.fillColor('black').fontSize(8).font('Helvetica-Bold')
           .text(`${institution.shortName?.toUpperCase() || ''}-${user.employeeNo}`,
-            x + 1, y + (cellH - 6.5) / 2, { width: empW - 2, align: 'center', lineBreak: false });
+            x + 1, y + (cellH - 8) / 2, { width: empW - 2, align: 'center', lineBreak: false });
         x += empW;
 
         // Name cell
         doc.rect(x, y, nameW, cellH).fillAndStroke(bg, '#CCCCCC');
-        doc.fillColor('black').fontSize(6.5).font('Helvetica')
-          .text(user.name.toUpperCase(), x + 2, y + (cellH - 6.5) / 2, { width: nameW - 4, lineBreak: false });
+        doc.fillColor('black').fontSize(8).font('Helvetica-Bold')
+          .text(user.name.toUpperCase(), x + 2, y + (cellH - 8) / 2, { width: nameW - 4, lineBreak: false });
         x += nameW;
 
         const colorMap = {
@@ -1604,14 +1604,14 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
               inLine = `In : ${day.checkIn || '--'}`;
               outLine = `AL/Out: ${day.checkOut || '--'}`;
             }
-            doc.fillColor('black').fontSize(6).font('Helvetica')
+            doc.fillColor('black').fontSize(7.5).font('Helvetica-Bold')
               .text(inLine,  x + 2, y + 3,             { width: colW - 4, lineBreak: false });
-            doc.fillColor('black').fontSize(6).font('Helvetica')
+            doc.fillColor('black').fontSize(7.5).font('Helvetica-Bold')
               .text(outLine, x + 2, y + cellH / 2 + 1, { width: colW - 4, lineBreak: false });
           } else {
             const label = day?.status || '-';
-            doc.fillColor('black').fontSize(7).font('Helvetica-Bold')
-              .text(label, x + 1, y + (cellH - 7) / 2, { width: colW - 2, align: 'center', lineBreak: false });
+            doc.fillColor('black').fontSize(9).font('Helvetica-Bold')
+              .text(label, x + 1, y + (cellH - 9) / 2, { width: colW - 2, align: 'center', lineBreak: false });
           }
 
           x += colW;
