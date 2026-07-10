@@ -1420,7 +1420,7 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
         const c   = ws.getCell(rowNum, 3 + i);
         const day = user.dailyData.find(d => d.date === ds);
 
-        if (day && (day.status === 'P' || day.status === 'OD/P' || day.status === 'P/OD' || day.status === 'OD/A' || day.status === 'A/OD')) {
+        if (day && (day.status === 'P' || day.status === 'OD/P' || day.status === 'P/OD' || day.status === 'OD/A' || day.status === 'A/OD' || day.status === 'ML/P' || day.status === 'P/AL')) {
           // Single cell: two lines — In then Out (bold)
           let inLine = 'In: --';
           let outLine = 'Out: --';
@@ -1439,6 +1439,12 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
           } else if (day.status === 'A/OD') {
             inLine = 'In: A';
             outLine = 'Out: OD';
+          } else if (day.status === 'ML/P') {
+            inLine = day.checkIn ? `ML/In: ${day.checkIn}` : 'ML/In: --';
+            outLine = day.checkOut ? `Out: ${day.checkOut}` : 'Out: --';
+          } else if (day.status === 'P/AL') {
+            inLine = day.checkIn ? `In: ${day.checkIn}` : 'In: --';
+            outLine = day.checkOut ? `AL/Out: ${day.checkOut}` : 'AL/Out: --';
           }
           c.value     = `${inLine}\n${outLine}`;
           c.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
@@ -1572,7 +1578,7 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
 
           doc.rect(x, y, colW, cellH).fillAndStroke(color, '#CCCCCC');
 
-          if (day && (day.status === 'P' || day.status === 'OD/P' || day.status === 'P/OD' || day.status === 'OD/A' || day.status === 'A/OD')) {
+          if (day && (day.status === 'P' || day.status === 'OD/P' || day.status === 'P/OD' || day.status === 'OD/A' || day.status === 'A/OD' || day.status === 'ML/P' || day.status === 'P/AL')) {
             // Two lines: In / Out
             let inLine = '--';
             let outLine = '--';
@@ -1591,6 +1597,12 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
             } else if (day.status === 'A/OD') {
               inLine = `In : A`;
               outLine = `Out: OD`;
+            } else if (day.status === 'ML/P') {
+              inLine = `ML/In: ${day.checkIn || '--'}`;
+              outLine = `Out: ${day.checkOut || '--'}`;
+            } else if (day.status === 'P/AL') {
+              inLine = `In : ${day.checkIn || '--'}`;
+              outLine = `AL/Out: ${day.checkOut || '--'}`;
             }
             doc.fillColor('black').fontSize(6).font('Helvetica')
               .text(inLine,  x + 2, y + 3,             { width: colW - 4, lineBreak: false });
