@@ -683,7 +683,10 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
       for (let d = new Date(start); d <= endD; d.setDate(d.getDate() + 1)) {
         const dateStr = moment(d).format('YYYY-MM-DD');
         if (!onDutyMap[record.employeeNo]) onDutyMap[record.employeeNo] = {};
-        onDutyMap[record.employeeNo][dateStr] = { description: record.description };
+        onDutyMap[record.employeeNo][dateStr] = {
+          description: record.description,
+          type: record.type || record.session
+        };
       }
     });
 
@@ -787,7 +790,35 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
             totalLeave++;
           }
         } else if (onDutyMap[user.employeeNo]?.[dateStr]) {
-          status = "OD"; totalOnDuty++; totalPresent++;
+          const od = onDutyMap[user.employeeNo][dateStr];
+          const att = attendanceMap[user.employeeNo]?.[dateStr];
+          if (od.type === 'half-day-morning') {
+            if (att) {
+              status = "OD/P";
+              totalOnDuty += 0.5;
+              totalPresent += 1.0;
+              totalHalfPresent++;
+            } else {
+              status = "OD/A";
+              totalOnDuty += 0.5;
+              totalPresent += 0.5;
+              totalAbsent += 0.5;
+            }
+          } else if (od.type === 'half-day-afternoon') {
+            if (att) {
+              status = "P/OD";
+              totalOnDuty += 0.5;
+              totalPresent += 1.0;
+              totalHalfPresent++;
+            } else {
+              status = "A/OD";
+              totalOnDuty += 0.5;
+              totalPresent += 0.5;
+              totalAbsent += 0.5;
+            }
+          } else {
+            status = "OD"; totalOnDuty++; totalPresent++;
+          }
         } else {
           const att = attendanceMap[user.employeeNo]?.[dateStr];
           if (!att) {
@@ -894,7 +925,7 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
           const cell = excelRow.getCell(colIndex + 3);
           if (dayData.status === "OD") {
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'CCFFCC' } }; // Light green
-          } else if (dayData.status === "ML/P" || dayData.status === "P/AL") {
+          } else if (dayData.status === "ML/P" || dayData.status === "P/AL" || dayData.status === "OD/P" || dayData.status === "P/OD" || dayData.status === "OD/A" || dayData.status === "A/OD") {
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD700' } }; // Gold
           } else if (dayData.status === "A") {
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFCCCC' } }; // Light Red/Pink
@@ -923,6 +954,10 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
         "OD": "#CCFFCC",
         "ML/P": "#FFD700",
         "P/AL": "#FFD700",
+        "OD/P": "#FFD700",
+        "P/OD": "#FFD700",
+        "OD/A": "#FFD700",
+        "A/OD": "#FFD700",
         "A": "#FFCCCC"
       };
 
@@ -972,7 +1007,7 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
           doc.strokeColor("black");
           if (idx >= 2 && row[idx] === "OD") {
             doc.rect(x, y, colWidths[idx], rowHeight).fillAndStroke(colorCodes["OD"], "black");
-          } else if (idx >= 2 && (row[idx] === "ML/P" || row[idx] === "P/AL")) {
+          } else if (idx >= 2 && (row[idx] === "ML/P" || row[idx] === "P/AL" || row[idx] === "OD/P" || row[idx] === "P/OD" || row[idx] === "OD/A" || row[idx] === "A/OD")) {
             doc.rect(x, y, colWidths[idx], rowHeight).fillAndStroke(colorCodes[row[idx]], "black");
           } else if (idx >= 2 && row[idx] === "A") {
             doc.rect(x, y, colWidths[idx], rowHeight).fillAndStroke(colorCodes["A"], "black");
@@ -1173,7 +1208,10 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
       for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
         const ds = moment(d).format('YYYY-MM-DD');
         if (!onDutyMap[r.employeeNo]) onDutyMap[r.employeeNo] = {};
-        onDutyMap[r.employeeNo][ds] = r.description;
+        onDutyMap[r.employeeNo][ds] = {
+          description: r.description,
+          type: r.type || r.session
+        };
       }
     });
 
@@ -1210,7 +1248,27 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
         } else if (user.leaveDays?.includes(dateStr) || leaveMap[user.employeeNo]?.[dateStr]) {
           status = 'L';
         } else if (onDutyMap[user.employeeNo]?.[dateStr]) {
-          status = 'OD';
+          const od = onDutyMap[user.employeeNo][dateStr];
+          const att = attendanceMap[user.employeeNo]?.[dateStr];
+          if (od.type === 'half-day-morning') {
+            if (att) {
+              status = 'OD/P';
+              checkOut = att.lastCheckOut
+                ? moment(att.lastCheckOut).tz('Asia/Kolkata').format('h:mm A')
+                : '';
+            } else {
+              status = 'OD/A';
+            }
+          } else if (od.type === 'half-day-afternoon') {
+            if (att) {
+              status = 'P/OD';
+              checkIn = moment(att.firstCheckIn).tz('Asia/Kolkata').format('h:mm A');
+            } else {
+              status = 'A/OD';
+            }
+          } else {
+            status = 'OD';
+          }
         } else {
           const att = attendanceMap[user.employeeNo]?.[dateStr];
           if (att) {
@@ -1287,7 +1345,20 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
     ws.getRow(3).height = 28;
 
     // Data rows
-    const statusColors = { OD:'CCFFCC', H:'EEEEEE', WH:'DDDDFF', A:'FFCCCC', L:'FFE4B5', MTL:'FFD700', 'ML/P':'FFD700', 'P/AL':'FFD700' };
+    const statusColors = {
+      OD: 'CCFFCC',
+      H: 'EEEEEE',
+      WH: 'DDDDFF',
+      A: 'FFCCCC',
+      L: 'FFE4B5',
+      MTL: 'FFD700',
+      'ML/P': 'FFD700',
+      'P/AL': 'FFD700',
+      'OD/P': 'FFD700',
+      'P/OD': 'FFD700',
+      'OD/A': 'FFD700',
+      'A/OD': 'FFD700'
+    };
 
     userData.forEach((user, idx) => {
       const rowNum = 4 + idx;
@@ -1310,13 +1381,31 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
         const c   = ws.getCell(rowNum, 3 + i);
         const day = user.dailyData.find(d => d.date === ds);
 
-        if (day && day.status === 'P') {
+        if (day && (day.status === 'P' || day.status === 'OD/P' || day.status === 'P/OD' || day.status === 'OD/A' || day.status === 'A/OD')) {
           // Single cell: two lines — In then Out (bold)
-          const inLine  = day.checkIn  ? `In: ${day.checkIn}`  : 'In: --';
-          const outLine = day.checkOut ? `Out: ${day.checkOut}` : 'Out: --';
+          let inLine = 'In: --';
+          let outLine = 'Out: --';
+          if (day.status === 'P') {
+            inLine = day.checkIn ? `In: ${day.checkIn}` : 'In: --';
+            outLine = day.checkOut ? `Out: ${day.checkOut}` : 'Out: --';
+          } else if (day.status === 'OD/P') {
+            inLine = 'In: OD';
+            outLine = day.checkOut ? `Out: ${day.checkOut}` : 'Out: --';
+          } else if (day.status === 'P/OD') {
+            inLine = day.checkIn ? `In: ${day.checkIn}` : 'In: --';
+            outLine = 'Out: OD';
+          } else if (day.status === 'OD/A') {
+            inLine = 'In: OD';
+            outLine = 'Out: A';
+          } else if (day.status === 'A/OD') {
+            inLine = 'In: A';
+            outLine = 'Out: OD';
+          }
           c.value     = `${inLine}\n${outLine}`;
           c.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
           c.font      = { size: 7.5, bold: true };
+          const bg = statusColors[day.status];
+          if (bg) c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb: bg } };
         } else {
           const label = day?.status || '-';
           c.value     = label;
@@ -1423,7 +1512,20 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
           .text(user.name.toUpperCase(), x + 2, y + (cellH - 6.5) / 2, { width: nameW - 4, lineBreak: false });
         x += nameW;
 
-        const colorMap = { OD:'#CCFFCC', H:'#EEEEEE', WH:'#DDDDFF', A:'#FFCCCC', L:'#FFE4B5', MTL:'#FFD700', 'ML/P':'#FFD700', 'P/AL':'#FFD700' };
+        const colorMap = {
+          OD: '#CCFFCC',
+          H: '#EEEEEE',
+          WH: '#DDDDFF',
+          A: '#FFCCCC',
+          L: '#FFE4B5',
+          MTL: '#FFD700',
+          'ML/P': '#FFD700',
+          'P/AL': '#FFD700',
+          'OD/P': '#FFD700',
+          'P/OD': '#FFD700',
+          'OD/A': '#FFD700',
+          'A/OD': '#FFD700'
+        };
 
         workingDates.forEach(ds => {
           const day   = user.dailyData.find(d => d.date === ds);
@@ -1431,10 +1533,26 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
 
           doc.rect(x, y, colW, cellH).fillAndStroke(color, '#CCCCCC');
 
-          if (day && day.status === 'P') {
+          if (day && (day.status === 'P' || day.status === 'OD/P' || day.status === 'P/OD' || day.status === 'OD/A' || day.status === 'A/OD')) {
             // Two lines: In / Out
-            const inLine  = `In : ${day.checkIn  || '--'}`;
-            const outLine = `Out: ${day.checkOut || '--'}`;
+            let inLine = '--';
+            let outLine = '--';
+            if (day.status === 'P') {
+              inLine = `In : ${day.checkIn || '--'}`;
+              outLine = `Out: ${day.checkOut || '--'}`;
+            } else if (day.status === 'OD/P') {
+              inLine = `In : OD`;
+              outLine = `Out: ${day.checkOut || '--'}`;
+            } else if (day.status === 'P/OD') {
+              inLine = `In : ${day.checkIn || '--'}`;
+              outLine = `Out: OD`;
+            } else if (day.status === 'OD/A') {
+              inLine = `In : OD`;
+              outLine = `Out: A`;
+            } else if (day.status === 'A/OD') {
+              inLine = `In : A`;
+              outLine = `Out: OD`;
+            }
             doc.fillColor('black').fontSize(6).font('Helvetica')
               .text(inLine,  x + 2, y + 3,             { width: colW - 4, lineBreak: false });
             doc.fillColor('black').fontSize(6).font('Helvetica')
