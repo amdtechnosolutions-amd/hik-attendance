@@ -698,12 +698,13 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
       if (!attendanceMap[a._id.employeeNo][a._id.date]) {
         // Adjust check-in time if it's after 9:00 AM
         let adjustedCheckIn = a.firstCheckIn;
-        const checkInHour = moment(a.firstCheckIn).hour();
+        const checkInHour = moment(a.firstCheckIn).tz('Asia/Kolkata').hour();
 
-        if (checkInHour >= 9) {
+        if (checkInHour >= 9 && checkInHour < 12) {
           // Adjust to a random time between 8:30 and 8:50 AM
           const randomMinute = Math.floor(Math.random() * 20) + 30; // 30-49
           adjustedCheckIn = moment(a.firstCheckIn)
+            .tz('Asia/Kolkata')
             .hour(8)
             .minute(randomMinute)
             .second(0)
@@ -849,7 +850,13 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
               totalAbsent++;
             }
           } else {
-            if (att.attendanceType === "ML/P") {
+            const checkInMoment = moment(att.firstCheckIn).tz('Asia/Kolkata');
+            if (checkInMoment.hour() >= 12) {
+              status = "ML/P";
+              totalHalfPresent++;
+              totalPresent += 0.5;
+              totalLeave += 0.5;
+            } else if (att.attendanceType === "ML/P") {
               status = "ML/P";
               totalHalfPresent++;
               totalPresent += 0.5;
@@ -1299,8 +1306,13 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
         } else {
           const att = attendanceMap[user.employeeNo]?.[dateStr];
           if (att) {
-            status   = 'P';
-            checkIn  = moment(att.firstCheckIn).tz('Asia/Kolkata').format('h:mm A');
+            const checkInMoment = moment(att.firstCheckIn).tz('Asia/Kolkata');
+            if (checkInMoment.hour() >= 12) {
+              status   = 'ML/P';
+            } else {
+              status   = 'P';
+            }
+            checkIn  = checkInMoment.format('h:mm A');
             checkOut = att.lastCheckOut
               ? moment(att.lastCheckOut).tz('Asia/Kolkata').format('h:mm A')
               : '';
