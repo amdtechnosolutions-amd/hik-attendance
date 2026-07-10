@@ -775,16 +775,33 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
           status = "L"; totalLeave++;
         } else if (leaveMap[user.employeeNo]?.[dateStr]) {
           const leaveType = leaveMap[user.employeeNo][dateStr];
+          const od = onDutyMap[user.employeeNo]?.[dateStr];
           if (leaveType === 'half-day-morning') {
-            status = "ML/P";
-            totalHalfPresent++;
-            totalPresent += 0.5;
-            totalLeave += 0.5;
+            if (od && od.type === 'half-day-afternoon') {
+              status = "ML/OD";
+              totalLeave += 0.5;
+              totalOnDuty += 0.5;
+              totalPresent += 0.5;
+              totalHalfPresent++;
+            } else {
+              status = "ML/P";
+              totalHalfPresent++;
+              totalPresent += 0.5;
+              totalLeave += 0.5;
+            }
           } else if (leaveType === 'half-day-afternoon') {
-            status = "P/AL";
-            totalHalfPresent++;
-            totalPresent += 0.5;
-            totalLeave += 0.5;
+            if (od && od.type === 'half-day-morning') {
+              status = "OD/AL";
+              totalLeave += 0.5;
+              totalOnDuty += 0.5;
+              totalPresent += 0.5;
+              totalHalfPresent++;
+            } else {
+              status = "P/AL";
+              totalHalfPresent++;
+              totalPresent += 0.5;
+              totalLeave += 0.5;
+            }
           } else {
             status = "L";
             totalLeave++;
@@ -1242,9 +1259,19 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
             (user.employeeNo.includes('033') && cur.isBetween('2026-01-07','2026-07-07','day','[]'))) {
           status = 'MTL';
         } else if (leaveMap[user.employeeNo]?.[dateStr] === 'half-day-morning') {
-          status = 'ML/P';
+          const od = onDutyMap[user.employeeNo]?.[dateStr];
+          if (od && od.type === 'half-day-afternoon') {
+            status = 'ML/OD';
+          } else {
+            status = 'ML/P';
+          }
         } else if (leaveMap[user.employeeNo]?.[dateStr] === 'half-day-afternoon') {
-          status = 'P/AL';
+          const od = onDutyMap[user.employeeNo]?.[dateStr];
+          if (od && od.type === 'half-day-morning') {
+            status = 'OD/AL';
+          } else {
+            status = 'P/AL';
+          }
         } else if (user.leaveDays?.includes(dateStr) || leaveMap[user.employeeNo]?.[dateStr]) {
           status = 'L';
         } else if (onDutyMap[user.employeeNo]?.[dateStr]) {

@@ -2157,7 +2157,10 @@ export async function getUsersWithDailyAttendanceList(req, res) {
 
     const onDutyMap = {};
     onDutyRecords.forEach(od => {
-      onDutyMap[od.employeeNo] = true;
+      onDutyMap[od.employeeNo] = {
+        description: od.description,
+        type: od.type || od.session
+      };
     });
 
     const leaveMap = {};
@@ -2188,11 +2191,39 @@ export async function getUsersWithDailyAttendanceList(req, res) {
       let firstCheckIn = null;
       let lastCheckOut = null;
 
-      if (isOnDuty) {
-        status = "OD";
-      } else if (leaveMap[user.employeeNo]) {
-        const lType = leaveMap[user.employeeNo];
-        status = (lType === 'maternity') ? "MTL" : "L";
+      const od = onDutyMap[user.employeeNo];
+      const leaveType = leaveMap[user.employeeNo];
+
+      if (od) {
+        if (od.type === 'half-day-morning') {
+          if (leaveType === 'half-day-afternoon') {
+            status = "OD/AL";
+          } else if (att) {
+            status = "OD/P";
+          } else {
+            status = "OD/A";
+          }
+        } else if (od.type === 'half-day-afternoon') {
+          if (leaveType === 'half-day-morning') {
+            status = "ML/OD";
+          } else if (att) {
+            status = "P/OD";
+          } else {
+            status = "A/OD";
+          }
+        } else {
+          status = "OD";
+        }
+      } else if (leaveType) {
+        if (leaveType === 'half-day-morning') {
+          status = "ML/P";
+        } else if (leaveType === 'half-day-afternoon') {
+          status = "P/AL";
+        } else if (leaveType === 'maternity') {
+          status = "MTL";
+        } else {
+          status = "L";
+        }
       } else if (att) {
 
         firstCheckIn = att.firstCheckIn;
@@ -2237,16 +2268,44 @@ export async function getUsersWithDailyAttendanceList(req, res) {
     const formattedAll = allUsers.map(user => {
       const att = attendanceMap[user.employeeNo];
       const isOnDuty = !!onDutyMap[user.employeeNo];
+      const od = onDutyMap[user.employeeNo];
+      const leaveType = leaveMap[user.employeeNo];
 
       let firstCheckIn = null;
       let lastCheckOut = null;
       let status = "A"; // Default: Absent
       let lateBy = "";
-      let leaveStatus = null;
-      const leaveType = leaveMap[user.employeeNo];
 
-      if (leaveType) {
-        leaveStatus = (leaveType.includes('maternity')) ? "MTL" : "L";
+      if (od) {
+        if (od.type === 'half-day-morning') {
+          if (leaveType === 'half-day-afternoon') {
+            status = "OD/AL";
+          } else if (att) {
+            status = "OD/P";
+          } else {
+            status = "OD/A";
+          }
+        } else if (od.type === 'half-day-afternoon') {
+          if (leaveType === 'half-day-morning') {
+            status = "ML/OD";
+          } else if (att) {
+            status = "P/OD";
+          } else {
+            status = "A/OD";
+          }
+        } else {
+          status = "OD";
+        }
+      } else if (leaveType) {
+        if (leaveType === 'half-day-morning') {
+          status = "ML/P";
+        } else if (leaveType === 'half-day-afternoon') {
+          status = "P/AL";
+        } else if (leaveType === 'maternity') {
+          status = "MTL";
+        } else {
+          status = "L";
+        }
       } else if (user.employeeNo.includes('033')) {
         // Fallback for 033: Only apply if date is within maternity range (Jan 7, 2026 - July 7, 2026)
         const reportDate = moment(formattedDate, "YYYY-MM-DD");
@@ -2254,15 +2313,11 @@ export async function getUsersWithDailyAttendanceList(req, res) {
         const endMaternity = moment("2026-07-07", "YYYY-MM-DD");
         
         if (reportDate.isBetween(startMaternity, endMaternity, 'day', '[]')) {
-             leaveStatus = "MTL";
+             status = "MTL";
         }
       }
 
-      if (isOnDuty) {
-        status = "OD";
-      } else if (leaveStatus) {
-        status = leaveStatus;
-      } else if (att) {
+      if (!od && !leaveType && status !== "MTL" && att) {
         firstCheckIn = att.firstCheckIn;
         lastCheckOut = att.lastCheckOut;
 

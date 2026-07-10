@@ -126,7 +126,12 @@ async function sendDailyReportForInstitution(institution) {
       endDate: { $gte: startOfDay }
     }).lean();
     const onDutyMap = {};
-    onDutyRecords.forEach(od => onDutyMap[od.employeeNo] = true);
+    onDutyRecords.forEach(od => {
+      onDutyMap[od.employeeNo] = {
+        description: od.description,
+        type: od.type || od.session
+      };
+    });
 
     const leaveRecords = await models.Leave.find({
       institutionId,
@@ -140,13 +145,33 @@ async function sendDailyReportForInstitution(institution) {
     users = users.map(user => {
       const att = attendanceMap[user.employeeNo];
       const isOnDuty = !!onDutyMap[user.employeeNo];
+      const od = onDutyMap[user.employeeNo];
+      const leaveType = leaveMap[user.employeeNo];
       let status = "A";
       let firstCheckIn = null, lastCheckOut = null;
 
-      if (isOnDuty) {
-        status = "OD";
-      } else if (leaveMap[user.employeeNo]) {
-        status = (leaveMap[user.employeeNo] === 'maternity') ? "MTL" : "L";
+      if (od) {
+        if (od.type === 'half-day-morning') {
+          if (leaveType === 'half-day-afternoon') {
+            status = "OD/AL";
+          } else if (att) {
+            status = "OD/P";
+          } else {
+            status = "OD/A";
+          }
+        } else if (od.type === 'half-day-afternoon') {
+          if (leaveType === 'half-day-morning') {
+            status = "ML/OD";
+          } else if (att) {
+            status = "P/OD";
+          } else {
+            status = "A/OD";
+          }
+        } else {
+          status = "OD";
+        }
+      } else if (leaveType) {
+        status = (leaveType === 'maternity') ? "MTL" : "L";
       } else if (att) {
         firstCheckIn = att.firstCheckIn;
         lastCheckOut = att.lastCheckOut;
