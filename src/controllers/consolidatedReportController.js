@@ -1340,50 +1340,12 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
     excelFilePath = path.join(reportsDir, excelFileName);
 
     const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet('Time Report');
+    const maxDays = 15;
+    const dateChunks = [];
+    for (let i = 0; i < workingDates.length; i += maxDays) {
+      dateChunks.push(workingDates.slice(i, i + maxDays));
+    }
 
-    const totalCols = 2 + workingDates.length; // 1 col per date now
-
-    // Row 1: title
-    ws.mergeCells(1, 1, 1, totalCols);
-    Object.assign(ws.getCell(1, 1), {
-      value: `${institution.name} - Attendance Report with Time`,
-      font:  { bold: true, size: 13 },
-      alignment: { horizontal: 'center' }
-    });
-
-    // Row 2: month label
-    ws.mergeCells(2, 1, 2, totalCols);
-    Object.assign(ws.getCell(2, 1), {
-      value: monthName,
-      font:  { bold: true, size: 11 },
-      alignment: { horizontal: 'center' }
-    });
-
-    // Row 3: headers — Faculty ID | Name | DD (one per working date)
-    const hdrStyle = {
-      font: { bold: true, color: { argb: 'FFFFFF' } },
-      fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: '8B4513' } },
-      alignment: { horizontal: 'center', vertical: 'middle', wrapText: true },
-      border: { top:{style:'thin'}, left:{style:'thin'}, bottom:{style:'thin'}, right:{style:'thin'} }
-    };
-    const applyHdr = (cell, value) => { cell.value = value; Object.assign(cell, hdrStyle); };
-
-    applyHdr(ws.getCell(3, 1), 'Faculty ID');
-    applyHdr(ws.getCell(3, 2), 'Name');
-    workingDates.forEach((ds, i) => {
-      applyHdr(ws.getCell(3, 3 + i), moment(ds).format('DD\nMMM'));
-    });
-
-    // Column widths
-    ws.getColumn(1).width = 14;
-    ws.getColumn(2).width = 24;   // name column
-    workingDates.forEach((_, i) => { ws.getColumn(3 + i).width = 16; }); // date cols
-
-    // Row height for header
-    ws.getRow(3).height = 28;
-
-    // Data rows
     const statusColors = {
       OD: 'CCFFCC',
       H: 'EEEEEE',
@@ -1399,72 +1361,159 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
       'A/OD': 'FFD700'
     };
 
-    userData.forEach((user, idx) => {
-      const rowNum = 4 + idx;
-      const empId  = `${institution.shortName?.toUpperCase() || ''}-${user.employeeNo}`;
-      const rowBg  = idx % 2 === 1 ? 'F8F8F8' : 'FFFFFF';
+    dateChunks.forEach((chunkDates, chunkIdx) => {
+      const partNum = chunkIdx + 1;
+      const sheetName = `Part ${partNum} (${moment(chunkDates[0]).format('DD')}-${moment(chunkDates[chunkDates.length - 1]).format('DD')})`;
+      const ws = wb.addWorksheet(sheetName);
 
-      const nameCell = ws.getCell(rowNum, 1);
-      nameCell.value = empId;
-      nameCell.border = { top:{style:'thin'}, left:{style:'thin'}, bottom:{style:'thin'}, right:{style:'thin'} };
-      nameCell.font   = { size: 10.5, bold: true };
-      if (idx % 2 === 1) nameCell.fill = { type:'pattern', pattern:'solid', fgColor:{ argb: rowBg } };
+      const totalCols = 2 + chunkDates.length; // 1 col per date now
 
-      const nm = ws.getCell(rowNum, 2);
-      nm.value  = user.name.toUpperCase();
-      nm.border = { top:{style:'thin'}, left:{style:'thin'}, bottom:{style:'thin'}, right:{style:'thin'} };
-      nm.font   = { size: 10.5, bold: true };
-      if (idx % 2 === 1) nm.fill = { type:'pattern', pattern:'solid', fgColor:{ argb: rowBg } };
-
-      workingDates.forEach((ds, i) => {
-        const c   = ws.getCell(rowNum, 3 + i);
-        const day = user.dailyData.find(d => d.date === ds);
-
-        if (day && (day.status === 'P' || day.status === 'OD/P' || day.status === 'P/OD' || day.status === 'OD/A' || day.status === 'A/OD' || day.status === 'ML/P' || day.status === 'P/AL')) {
-          // Single cell: two lines — In then Out (bold)
-          let inLine = 'In: --';
-          let outLine = 'Out: --';
-          if (day.status === 'P') {
-            inLine = day.checkIn ? `In: ${day.checkIn}` : 'In: --';
-            outLine = day.checkOut ? `Out: ${day.checkOut}` : 'Out: --';
-          } else if (day.status === 'OD/P') {
-            inLine = 'In: OD';
-            outLine = day.checkOut ? `Out: ${day.checkOut}` : 'Out: --';
-          } else if (day.status === 'P/OD') {
-            inLine = day.checkIn ? `In: ${day.checkIn}` : 'In: --';
-            outLine = 'Out: OD';
-          } else if (day.status === 'OD/A') {
-            inLine = 'In: OD';
-            outLine = 'Out: A';
-          } else if (day.status === 'A/OD') {
-            inLine = 'In: A';
-            outLine = 'Out: OD';
-          } else if (day.status === 'ML/P') {
-            inLine = day.checkIn ? `ML/In: ${day.checkIn}` : 'ML/In: --';
-            outLine = day.checkOut ? `Out: ${day.checkOut}` : 'Out: --';
-          } else if (day.status === 'P/AL') {
-            inLine = day.checkIn ? `In: ${day.checkIn}` : 'In: --';
-            outLine = day.checkOut ? `AL/Out: ${day.checkOut}` : 'AL/Out: --';
-          }
-          c.value     = `${inLine}\n${outLine}`;
-          c.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
-          c.font      = { size: 9, bold: true };
-          const bg = statusColors[day.status];
-          if (bg) c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb: bg } };
-        } else {
-          const label = day?.status || '-';
-          c.value     = label;
-          c.alignment = { horizontal: 'center', vertical: 'middle' };
-          c.font      = { size: 11, bold: true };
-          const bg = statusColors[label];
-          if (bg) c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb: bg } };
-        }
-
-        c.border = { top:{style:'thin'}, left:{style:'thin'}, bottom:{style:'thin'}, right:{style:'thin'} };
+      // Row 1: title
+      ws.mergeCells(1, 1, 1, totalCols);
+      Object.assign(ws.getCell(1, 1), {
+        value: `${institution.name} - Attendance Report with Time`,
+        font:  { bold: true, size: 13 },
+        alignment: { horizontal: 'center' }
       });
 
-      // Taller rows so two lines fit
-      ws.getRow(rowNum).height = 32;
+      // Row 2: month label
+      ws.mergeCells(2, 1, 2, totalCols);
+      Object.assign(ws.getCell(2, 1), {
+        value: monthName,
+        font:  { bold: true, size: 11 },
+        alignment: { horizontal: 'center' }
+      });
+
+      // Row 3: headers — Faculty ID | Name | DD (one per working date)
+      const hdrStyle = {
+        font: { bold: true, color: { argb: 'FFFFFF' } },
+        fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: '8B4513' } },
+        alignment: { horizontal: 'center', vertical: 'middle', wrapText: true },
+        border: { top:{style:'thin'}, left:{style:'thin'}, bottom:{style:'thin'}, right:{style:'thin'} }
+      };
+      const applyHdr = (cell, value) => { cell.value = value; Object.assign(cell, hdrStyle); };
+
+      applyHdr(ws.getCell(3, 1), 'Faculty ID');
+      applyHdr(ws.getCell(3, 2), 'Name');
+      chunkDates.forEach((ds, i) => {
+        applyHdr(ws.getCell(3, 3 + i), moment(ds).format('DD\nMMM'));
+      });
+
+      // Column widths
+      ws.getColumn(1).width = 14;
+      ws.getColumn(2).width = 24;   // name column
+      chunkDates.forEach((_, i) => { ws.getColumn(3 + i).width = 16; }); // date cols
+
+      // Row height for header
+      ws.getRow(3).height = 28;
+
+      userData.forEach((user, idx) => {
+        const rowNum = 4 + idx;
+        const empId  = `${institution.shortName?.toUpperCase() || ''}-${user.employeeNo}`;
+        const rowBg  = idx % 2 === 1 ? 'F8F8F8' : 'FFFFFF';
+
+        const nameCell = ws.getCell(rowNum, 1);
+        nameCell.value = empId;
+        nameCell.border = { top:{style:'thin'}, left:{style:'thin'}, bottom:{style:'thin'}, right:{style:'thin'} };
+        nameCell.font   = { size: 10.5, bold: true };
+        if (idx % 2 === 1) nameCell.fill = { type:'pattern', pattern:'solid', fgColor:{ argb: rowBg } };
+
+        const nm = ws.getCell(rowNum, 2);
+        nm.value  = user.name.toUpperCase();
+        nm.border = { top:{style:'thin'}, left:{style:'thin'}, bottom:{style:'thin'}, right:{style:'thin'} };
+        nm.font   = { size: 10.5, bold: true };
+        if (idx % 2 === 1) nm.fill = { type:'pattern', pattern:'solid', fgColor:{ argb: rowBg } };
+
+        chunkDates.forEach((ds, i) => {
+          const c   = ws.getCell(rowNum, 3 + i);
+          const day = user.dailyData.find(d => d.date === ds);
+
+          if (day && (day.status === 'P' || day.status === 'OD/P' || day.status === 'P/OD' || day.status === 'OD/A' || day.status === 'A/OD' || day.status === 'ML/P' || day.status === 'P/AL')) {
+            // Single cell: two lines — In then Out (bold)
+            let inLine = 'In: --';
+            let outLine = 'Out: --';
+            if (day.status === 'P') {
+              inLine = day.checkIn ? `In: ${day.checkIn}` : 'In: --';
+              outLine = day.checkOut ? `Out: ${day.checkOut}` : 'Out: --';
+            } else if (day.status === 'OD/P') {
+              inLine = 'In: OD';
+              outLine = day.checkOut ? `Out: ${day.checkOut}` : 'Out: --';
+            } else if (day.status === 'P/OD') {
+              inLine = day.checkIn ? `In: ${day.checkIn}` : 'In: --';
+              outLine = 'Out: OD';
+            } else if (day.status === 'OD/A') {
+              inLine = 'In: OD';
+              outLine = 'Out: A';
+            } else if (day.status === 'A/OD') {
+              inLine = 'In: A';
+              outLine = 'Out: OD';
+            } else if (day.status === 'ML/P') {
+              inLine = day.checkIn ? `ML/In: ${day.checkIn}` : 'ML/In: --';
+              outLine = day.checkOut ? `Out: ${day.checkOut}` : 'Out: --';
+            } else if (day.status === 'P/AL') {
+              inLine = day.checkIn ? `In: ${day.checkIn}` : 'In: --';
+              outLine = day.checkOut ? `AL/Out: ${day.checkOut}` : 'AL/Out: --';
+            }
+            c.value     = `${inLine}\n${outLine}`;
+            c.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+            c.font      = { size: 9, bold: true };
+            const bg = statusColors[day.status];
+            if (bg) c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb: bg } };
+          } else {
+            const label = day?.status || '-';
+            c.value     = label;
+            c.alignment = { horizontal: 'center', vertical: 'middle' };
+            c.font      = { size: 11, bold: true };
+            const bg = statusColors[label];
+            if (bg) c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb: bg } };
+          }
+
+          c.border = { top:{style:'thin'}, left:{style:'thin'}, bottom:{style:'thin'}, right:{style:'thin'} };
+        });
+
+        // Taller rows so two lines fit
+        ws.getRow(rowNum).height = 32;
+      });
+
+      // Descriptions & Signatures at the bottom
+      ws.addRow([]);
+      
+      const descRow1 = ws.addRow(['STATUS DESCRIPTIONS:']);
+      descRow1.getCell(1).font = { bold: true, size: 10 };
+      
+      const descRow2 = ws.addRow(['P: Present | A: Absent | L: Leave | HD: Half Day | OD: On Duty | MTL: Maternity Leave | WH: Weekend Holiday | H: Holiday']);
+      descRow2.getCell(1).font = { size: 9 };
+      
+      const descRow3 = ws.addRow(['ML/P: Morning Leave / Present | P/AL: Present / Afternoon Leave | ML/OD: Morning Leave / Afternoon On Duty']);
+      descRow3.getCell(1).font = { size: 9 };
+
+      const descRow4 = ws.addRow(['OD/P: Morning On Duty / Afternoon Present | P/OD: Morning Present / Afternoon On Duty | OD/AL: Morning On Duty / Afternoon Leave']);
+      descRow4.getCell(1).font = { size: 9 };
+
+      const descRow5 = ws.addRow(['OD/A: Morning On Duty / Afternoon Absent | A/OD: Morning Absent / Afternoon On Duty']);
+      descRow5.getCell(1).font = { size: 9 };
+
+      ws.addRow([]);
+      ws.addRow([]);
+
+      const principalTitle = "PRINCIPAL";
+      const principalName = "S.SUJATHA DOLLY";
+      const correspondentTitle = "CORRESPONDENT";
+      const correspondentName = "T.C.ANBAZHAKAN";
+
+      const signRow1Num = ws.addRow([]).number;
+      ws.getCell(signRow1Num, 1).value = principalTitle;
+      ws.getCell(signRow1Num, 1).font = { bold: true, size: 11 };
+      ws.getCell(signRow1Num, totalCols).value = correspondentTitle;
+      ws.getCell(signRow1Num, totalCols).font = { bold: true, size: 11 };
+      ws.getCell(signRow1Num, totalCols).alignment = { horizontal: 'right' };
+
+      const signRow2Num = ws.addRow([]).number;
+      ws.getCell(signRow2Num, 1).value = principalName;
+      ws.getCell(signRow2Num, 1).font = { bold: true, size: 11 };
+      ws.getCell(signRow2Num, totalCols).value = correspondentName;
+      ws.getCell(signRow2Num, totalCols).font = { bold: true, size: 11 };
+      ws.getCell(signRow2Num, totalCols).alignment = { horizontal: 'right' };
     });
 
     await wb.xlsx.writeFile(excelFilePath);
@@ -1489,14 +1538,13 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
       const logoPath = path.join(process.cwd(), 'public', 'logo.png');
       const hasLogo  = fs.existsSync(logoPath);
 
-      // PDF layout constants — 1 column per day now
-      const colW    = Math.max(34, Math.floor((doc.page.width - margin * 2 - empW - nameW) / workingDates.length));
+      const colWForChunk = (chunkDates) => Math.max(34, Math.floor((doc.page.width - margin * 2 - empW - nameW) / chunkDates.length));
       const cellH   = 28;  // taller to fit 2 lines (In / Out)
       const hdrH    = 20;
 
-
-      const drawHeaders = (isFirstPage = false) => {
+      const drawHeaders = (chunkDates, isFirstPage = false) => {
         let topY = 20;
+        const colW = colWForChunk(chunkDates);
 
         // ── Logo ──
         if (hasLogo) {
@@ -1525,7 +1573,7 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
         fillHdr('Faculty ID', x, empW,  hdrH); x += empW;
         fillHdr('Name',       x, nameW, hdrH); x += nameW;
 
-        workingDates.forEach(ds => {
+        chunkDates.forEach(ds => {
           fillHdr(moment(ds).format('DD'), x, colW, hdrH);
           x += colW;
         });
@@ -1533,92 +1581,147 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
         return y + hdrH;
       };
 
-      let y = drawHeaders(true);
-
-      userData.forEach((user, idx) => {
-        if (y + cellH > doc.page.height - margin - 20) {
+      const drawFooter = (currentY) => {
+        let footerY = currentY + 20;
+        
+        if (footerY + 140 > doc.page.height - margin) {
           doc.addPage({ size: 'A3', layout: 'landscape', margin: 20 });
-          y = drawHeaders();
+          footerY = 40;
         }
 
-        const bg = idx % 2 === 0 ? '#FFFFFF' : '#F8F8F8';
-        let x = margin;
+        doc.fontSize(10).font('Helvetica-Bold').fillColor('black')
+          .text("STATUS DESCRIPTIONS:", margin + 10, footerY);
+        footerY += 15;
+        
+        doc.fontSize(8).font('Helvetica')
+          .text("P: Present | A: Absent | L: Leave | HD: Half Day | OD: On Duty | MTL: Maternity Leave | WH: Weekend Holiday | H: Holiday", margin + 10, footerY);
+        footerY += 12;
 
-        // Faculty ID cell
-        doc.rect(x, y, empW, cellH).fillAndStroke(bg, '#CCCCCC');
-        doc.fillColor('black').fontSize(8).font('Helvetica-Bold')
-          .text(`${institution.shortName?.toUpperCase() || ''}-${user.employeeNo}`,
-            x + 1, y + (cellH - 8) / 2, { width: empW - 2, align: 'center', lineBreak: false });
-        x += empW;
+        doc.text("ML/P: Morning Leave / Present | P/AL: Present / Afternoon Leave | ML/OD: Morning Leave / Afternoon On Duty", margin + 10, footerY);
+        footerY += 12;
 
-        // Name cell
-        doc.rect(x, y, nameW, cellH).fillAndStroke(bg, '#CCCCCC');
-        doc.fillColor('black').fontSize(8).font('Helvetica-Bold')
-          .text(user.name.toUpperCase(), x + 2, y + (cellH - 8) / 2, { width: nameW - 4, lineBreak: false });
-        x += nameW;
+        doc.text("OD/P: Morning On Duty / Afternoon Present | P/OD: Morning Present / Afternoon On Duty | OD/AL: Morning On Duty / Afternoon Leave", margin + 10, footerY);
+        footerY += 12;
 
-        const colorMap = {
-          OD: '#CCFFCC',
-          H: '#EEEEEE',
-          WH: '#DDDDFF',
-          A: '#FFCCCC',
-          L: '#FFE4B5',
-          MTL: '#FFD700',
-          'ML/P': '#FFD700',
-          'P/AL': '#FFD700',
-          'OD/P': '#FFD700',
-          'P/OD': '#FFD700',
-          'OD/A': '#FFD700',
-          'A/OD': '#FFD700'
-        };
+        doc.text("OD/A: Morning On Duty / Afternoon Absent | A/OD: Morning Absent / Afternoon On Duty", margin + 10, footerY);
 
-        workingDates.forEach(ds => {
-          const day   = user.dailyData.find(d => d.date === ds);
-          const color = (day && colorMap[day.status]) || bg;
+        let signY = doc.page.height - 70;
+        
+        const principalTitle = "PRINCIPAL";
+        const principalName = "S.SUJATHA DOLLY";
+        const correspondentTitle = "CORRESPONDENT";
+        const correspondentName = "T.C.ANBAZHAKAN";
+        const signLineLength = 140;
 
-          doc.rect(x, y, colW, cellH).fillAndStroke(color, '#CCCCCC');
+        doc.fontSize(11).font('Helvetica-Bold')
+          .text(principalTitle, margin + 10, signY - 15, { align: "left" });
+        doc.fontSize(11).font('Helvetica-Bold')
+          .text(principalName, margin + 10, signY + 7, { align: "left" });
 
-          if (day && (day.status === 'P' || day.status === 'OD/P' || day.status === 'P/OD' || day.status === 'OD/A' || day.status === 'A/OD' || day.status === 'ML/P' || day.status === 'P/AL')) {
-            // Two lines: In / Out
-            let inLine = '--';
-            let outLine = '--';
-            if (day.status === 'P') {
-              inLine = `In : ${day.checkIn || '--'}`;
-              outLine = `Out: ${day.checkOut || '--'}`;
-            } else if (day.status === 'OD/P') {
-              inLine = `In : OD`;
-              outLine = `Out: ${day.checkOut || '--'}`;
-            } else if (day.status === 'P/OD') {
-              inLine = `In : ${day.checkIn || '--'}`;
-              outLine = `Out: OD`;
-            } else if (day.status === 'OD/A') {
-              inLine = `In : OD`;
-              outLine = `Out: A`;
-            } else if (day.status === 'A/OD') {
-              inLine = `In : A`;
-              outLine = `Out: OD`;
-            } else if (day.status === 'ML/P') {
-              inLine = `ML/In: ${day.checkIn || '--'}`;
-              outLine = `Out: ${day.checkOut || '--'}`;
-            } else if (day.status === 'P/AL') {
-              inLine = `In : ${day.checkIn || '--'}`;
-              outLine = `AL/Out: ${day.checkOut || '--'}`;
-            }
-            doc.fillColor('black').fontSize(7.5).font('Helvetica-Bold')
-              .text(inLine,  x + 2, y + 3,             { width: colW - 4, lineBreak: false });
-            doc.fillColor('black').fontSize(7.5).font('Helvetica-Bold')
-              .text(outLine, x + 2, y + cellH / 2 + 1, { width: colW - 4, lineBreak: false });
-          } else {
-            const label = day?.status || '-';
-            doc.fillColor('black').fontSize(9).font('Helvetica-Bold')
-              .text(label, x + 1, y + (cellH - 9) / 2, { width: colW - 2, align: 'center', lineBreak: false });
+        const rightSignX = doc.page.width - signLineLength - 30;
+        doc.fontSize(11).font('Helvetica-Bold')
+          .text(correspondentTitle, rightSignX, signY - 15, { align: "right", width: signLineLength });
+        doc.fontSize(11).font('Helvetica-Bold')
+          .text(correspondentName, rightSignX, signY + 7, { align: "right", width: signLineLength });
+      };
+
+      for (let cIdx = 0; cIdx < dateChunks.length; cIdx++) {
+        const currentChunk = dateChunks[cIdx];
+        const colW = colWForChunk(currentChunk);
+
+        if (cIdx > 0) {
+          doc.addPage({ size: 'A3', layout: 'landscape', margin: 20 });
+        }
+
+        let y = drawHeaders(currentChunk, cIdx === 0);
+
+        userData.forEach((user, idx) => {
+          if (y + cellH > doc.page.height - margin - 20) {
+            doc.addPage({ size: 'A3', layout: 'landscape', margin: 20 });
+            y = drawHeaders(currentChunk, false);
           }
 
-          x += colW;
+          const bg = idx % 2 === 0 ? '#FFFFFF' : '#F8F8F8';
+          let x = margin;
+
+          // Faculty ID cell
+          doc.rect(x, y, empW, cellH).fillAndStroke(bg, '#CCCCCC');
+          doc.fillColor('black').fontSize(8).font('Helvetica-Bold')
+            .text(`${institution.shortName?.toUpperCase() || ''}-${user.employeeNo}`,
+              x + 1, y + (cellH - 8) / 2, { width: empW - 2, align: 'center', lineBreak: false });
+          x += empW;
+
+          // Name cell
+          doc.rect(x, y, nameW, cellH).fillAndStroke(bg, '#CCCCCC');
+          doc.fillColor('black').fontSize(8).font('Helvetica-Bold')
+            .text(user.name.toUpperCase(), x + 2, y + (cellH - 8) / 2, { width: nameW - 4, lineBreak: false });
+          x += nameW;
+
+          const colorMap = {
+            OD: '#CCFFCC',
+            H: '#EEEEEE',
+            WH: '#DDDDFF',
+            A: '#FFCCCC',
+            L: '#FFE4B5',
+            MTL: '#FFD700',
+            'ML/P': '#FFD700',
+            'P/AL': '#FFD700',
+            'OD/P': '#FFD700',
+            'P/OD': '#FFD700',
+            'OD/A': '#FFD700',
+            'A/OD': '#FFD700'
+          };
+
+          currentChunk.forEach(ds => {
+            const day   = user.dailyData.find(d => d.date === ds);
+            const color = (day && colorMap[day.status]) || bg;
+
+            doc.rect(x, y, colW, cellH).fillAndStroke(color, '#CCCCCC');
+
+            if (day && (day.status === 'P' || day.status === 'OD/P' || day.status === 'P/OD' || day.status === 'OD/A' || day.status === 'A/OD' || day.status === 'ML/P' || day.status === 'P/AL')) {
+              // Two lines: In / Out
+              let inLine = '--';
+              let outLine = '--';
+              if (day.status === 'P') {
+                inLine = `In : ${day.checkIn || '--'}`;
+                outLine = `Out: ${day.checkOut || '--'}`;
+              } else if (day.status === 'OD/P') {
+                inLine = `In : OD`;
+                outLine = `Out: ${day.checkOut || '--'}`;
+              } else if (day.status === 'P/OD') {
+                inLine = `In : ${day.checkIn || '--'}`;
+                outLine = `Out: OD`;
+              } else if (day.status === 'OD/A') {
+                inLine = `In : OD`;
+                outLine = `Out: A`;
+              } else if (day.status === 'A/OD') {
+                inLine = `In : A`;
+                outLine = `Out: OD`;
+              } else if (day.status === 'ML/P') {
+                inLine = `ML/In: ${day.checkIn || '--'}`;
+                outLine = `Out: ${day.checkOut || '--'}`;
+              } else if (day.status === 'P/AL') {
+                inLine = `In : ${day.checkIn || '--'}`;
+                outLine = `AL/Out: ${day.checkOut || '--'}`;
+              }
+              doc.fillColor('black').fontSize(7.5).font('Helvetica-Bold')
+                .text(inLine,  x + 2, y + 3,             { width: colW - 4, lineBreak: false });
+              doc.fillColor('black').fontSize(7.5).font('Helvetica-Bold')
+                .text(outLine, x + 2, y + cellH / 2 + 1, { width: colW - 4, lineBreak: false });
+            } else {
+              const label = day?.status || '-';
+              doc.fillColor('black').fontSize(9).font('Helvetica-Bold')
+                .text(label, x + 1, y + (cellH - 9) / 2, { width: colW - 2, align: 'center', lineBreak: false });
+            }
+
+            x += colW;
+          });
+
+          y += cellH;
         });
 
-        y += cellH;
-      });
+        drawFooter(y);
+      }
 
       doc.end();
       stream.on('finish', resolve);
