@@ -513,8 +513,8 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
         });
       }
 
-      startDate = moment(startDateStr, "YYYY-MM-DD").startOf("day").toDate();
-      endDate = moment(endDateStr, "YYYY-MM-DD").endOf("day").toDate();
+      startDate = moment.tz(startDateStr, "YYYY-MM-DD", "Asia/Kolkata").startOf("day").toDate();
+      endDate = moment.tz(endDateStr, "YYYY-MM-DD", "Asia/Kolkata").endOf("day").toDate();
 
       if (startDate > endDate) {
         return res.status(400).json({
@@ -523,8 +523,8 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
         });
       }
 
-      monthName = `${moment(startDate).format("DD MMM YYYY")} to ${moment(endDate).format("DD MMM YYYY")}`;
-      label = `${moment(startDate).format("YYYYMMDD")}_${moment(endDate).format("YYYYMMDD")}`;
+      monthName = `${moment.tz(startDate, "Asia/Kolkata").format("DD MMM YYYY")} to ${moment.tz(endDate, "Asia/Kolkata").format("DD MMM YYYY")}`;
+      label = `${moment.tz(startDate, "Asia/Kolkata").format("YYYYMMDD")}_${moment.tz(endDate, "Asia/Kolkata").format("YYYYMMDD")}`;
     }
     // ---------------------------
     // 📌 CASE 2: Month + Year
@@ -540,10 +540,10 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
         return res.status(400).json({ success: false, message: "Invalid year. Must be between 2000 and 2100." });
       }
 
-      startDate = moment(`${yearNum}-${String(monthNum).padStart(2, "0")}-01`, "YYYY-MM-DD")
+      startDate = moment.tz(`${yearNum}-${String(monthNum).padStart(2, "0")}-01`, "YYYY-MM-DD", "Asia/Kolkata")
         .startOf("month")
         .toDate();
-      endDate = moment(startDate).endOf("month").toDate();
+      endDate = moment.tz(startDate, "Asia/Kolkata").endOf("month").toDate();
 
       monthName = moment(startDate).format("MMMM YYYY");
       label = `${monthNum}_${yearNum}`;
@@ -558,8 +558,8 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
     // 📅 Build full date list in range
     // ---------------------------------
     const dateList = [];
-    let loopDate = moment(startDate);
-    const endMoment = moment(endDate);
+    let loopDate = moment.tz(startDate, "Asia/Kolkata");
+    const endMoment = moment.tz(endDate, "Asia/Kolkata");
 
     while (loopDate.isSameOrBefore(endMoment, "day")) {
       dateList.push(loopDate.format("YYYY-MM-DD"));
@@ -1181,10 +1181,10 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
       startDate = moment.tz(qs, 'Asia/Kolkata').startOf('day').toDate();
       endDate   = moment.tz(qe, 'Asia/Kolkata').endOf('day').toDate();
       if (startDate > endDate) return res.status(400).json({ success: false, message: 'startDate > endDate' });
-      monthName = `${moment(startDate).format('DD MMM YYYY')} to ${moment(endDate).format('DD MMM YYYY')}`;
-      label     = `${moment(startDate).format('YYYYMMDD')}_${moment(endDate).format('YYYYMMDD')}`;
-      monthNum  = moment(startDate).month() + 1;
-      yearNum   = moment(startDate).year();
+      monthName = `${moment.tz(startDate, 'Asia/Kolkata').format('DD MMM YYYY')} to ${moment.tz(endDate, 'Asia/Kolkata').format('DD MMM YYYY')}`;
+      label     = `${moment.tz(startDate, 'Asia/Kolkata').format('YYYYMMDD')}_${moment.tz(endDate, 'Asia/Kolkata').format('YYYYMMDD')}`;
+      monthNum  = moment.tz(startDate, 'Asia/Kolkata').month() + 1;
+      yearNum   = moment.tz(startDate, 'Asia/Kolkata').year();
     } else if (month && year) {
       monthNum  = Number(month);
       yearNum   = Number(year);
@@ -1192,9 +1192,9 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
         return res.status(400).json({ success: false, message: 'Invalid month' });
       if (isNaN(yearNum) || yearNum < 2000 || yearNum > 2100)
         return res.status(400).json({ success: false, message: 'Invalid year' });
-      startDate = moment(`${yearNum}-${String(monthNum).padStart(2,'0')}-01`).startOf('month').toDate();
-      endDate   = moment(startDate).endOf('month').toDate();
-      monthName = moment(startDate).format('MMMM YYYY');
+      startDate = moment.tz(`${yearNum}-${String(monthNum).padStart(2,'0')}-01`, 'Asia/Kolkata').startOf('month').toDate();
+      endDate   = moment.tz(startDate, 'Asia/Kolkata').endOf('month').toDate();
+      monthName = moment.tz(startDate, 'Asia/Kolkata').format('MMMM YYYY');
       label     = `${monthNum}_${yearNum}`;
     } else {
       return res.status(400).json({ success: false, message: 'Provide month+year or startDate+endDate' });
@@ -1202,7 +1202,7 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
 
     /* ── date list ── */
     const dateList = [];
-    for (let d = moment(startDate); d.isSameOrBefore(moment(endDate), 'day'); d.add(1, 'day')) {
+    for (let d = moment.tz(startDate, 'Asia/Kolkata'); d.isSameOrBefore(moment.tz(endDate, 'Asia/Kolkata'), 'day'); d.add(1, 'day')) {
       dateList.push(d.format('YYYY-MM-DD'));
     }
 
