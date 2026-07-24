@@ -17,6 +17,7 @@ pm2-out*.log
 db_backup/
 db_backup_*/
 backup_temp/
+backups/
 
 # Generated reports (PDFs, Excel)
 public/reports/
