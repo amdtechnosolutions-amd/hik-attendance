@@ -627,7 +627,8 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
           },
           firstCheckIn: { $min: "$timestamp" },
           lastCheckOut: { $max: "$timestamp" },
-          rawData: { $push: "$raw" }
+          rawData: { $push: "$raw" },
+          usedCompOff: { $max: "$usedCompOff" }
         },
       },
       {
@@ -680,13 +681,16 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
     onDutyRecords.forEach(record => {
       const start = new Date(Math.max(record.startDate, startDate));
       const endD = new Date(Math.min(record.endDate, endDate));
-      for (let d = new Date(start); d <= endD; d.setDate(d.getDate() + 1)) {
-        const dateStr = moment(d).format('YYYY-MM-DD');
+      const current = moment(start).tz('Asia/Kolkata');
+      const limit = moment(endD).tz('Asia/Kolkata');
+      while (current.isSameOrBefore(limit, 'day')) {
+        const dateStr = current.format('YYYY-MM-DD');
         if (!onDutyMap[record.employeeNo]) onDutyMap[record.employeeNo] = {};
         onDutyMap[record.employeeNo][dateStr] = {
           description: record.description,
           type: record.type || record.session
         };
+        current.add(1, 'day');
       }
     });
 
@@ -714,7 +718,8 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
         attendanceMap[a._id.employeeNo][a._id.date] = {
           firstCheckIn: adjustedCheckIn,
           lastCheckOut: a.lastCheckOut,
-          attendanceType: "FULL"
+          attendanceType: "FULL",
+          usedCompOff: !!a.usedCompOff
         };
       } else {
         // Update existing entry
@@ -850,25 +855,30 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
               totalAbsent++;
             }
           } else {
-            const checkInMoment = moment(att.firstCheckIn).tz('Asia/Kolkata');
-            if (checkInMoment.hour() >= 12) {
-              status = "ML/P";
-              totalHalfPresent++;
-              totalPresent += 0.5;
-              totalLeave += 0.5;
-            } else if (att.attendanceType === "ML/P") {
-              status = "ML/P";
-              totalHalfPresent++;
-              totalPresent += 0.5;
-              totalLeave += 0.5;
-            } else if (att.attendanceType === "P/AL") {
-              status = "P/AL";
-              totalHalfPresent++;
-              totalPresent += 0.5;
-              totalLeave += 0.5;
+            if (att.usedCompOff) {
+              status = 'COMP-OFF';
+              totalLeave++;
             } else {
-              status = "P";
-              totalPresent++;
+              const checkInMoment = moment(att.firstCheckIn).tz('Asia/Kolkata');
+              if (checkInMoment.hour() >= 12) {
+                status = "ML/P";
+                totalHalfPresent++;
+                totalPresent += 0.5;
+                totalLeave += 0.5;
+              } else if (att.attendanceType === "ML/P") {
+                status = "ML/P";
+                totalHalfPresent++;
+                totalPresent += 0.5;
+                totalLeave += 0.5;
+              } else if (att.attendanceType === "P/AL") {
+                status = "P/AL";
+                totalHalfPresent++;
+                totalPresent += 0.5;
+                totalLeave += 0.5;
+              } else {
+                status = "P";
+                totalPresent++;
+              }
             }
           }
         }
@@ -953,6 +963,8 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD700' } }; // Gold
           } else if (dayData.status === "A") {
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFCCCC' } }; // Light Red/Pink
+          } else if (dayData.status === "COMP-OFF") {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE4B5' } }; // Light Orange
           }
         }
       });
@@ -982,7 +994,8 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
         "P/OD": "#FFD700",
         "OD/A": "#FFD700",
         "A/OD": "#FFD700",
-        "A": "#FFCCCC"
+        "A": "#FFCCCC",
+        "COMP-OFF": "#FFE4B5"
       };
 
       // HEADER + LOGO
@@ -1203,7 +1216,8 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
             _id: { employeeNo: '$employeeNo', date: { $dateToString: { format: '%Y-%m-%d', date: '$timestamp', timezone: 'Asia/Kolkata' } } },
             firstCheckIn:  { $min: '$timestamp' },
             lastCheckOut:  { $max: '$timestamp' },
-            punchCount:    { $sum: 1 }
+            punchCount:    { $sum: 1 },
+            usedCompOff:   { $max: '$usedCompOff' }
         }}
       ]),
       models.OnDuty.find({ $or: [
@@ -1221,7 +1235,8 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
       const hasRealOut = a.punchCount > 1 && a.lastCheckOut?.getTime() !== a.firstCheckIn?.getTime();
       attendanceMap[a._id.employeeNo][a._id.date] = {
         firstCheckIn:  a.firstCheckIn,
-        lastCheckOut:  hasRealOut ? a.lastCheckOut : null
+        lastCheckOut:  hasRealOut ? a.lastCheckOut : null,
+        usedCompOff:   !!a.usedCompOff
       };
     });
 
@@ -1229,13 +1244,16 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
     onDutyRecords.forEach(r => {
       const s = new Date(Math.max(r.startDate, startDate));
       const e = new Date(Math.min(r.endDate,   endDate));
-      for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
-        const ds = moment(d).format('YYYY-MM-DD');
+      const current = moment(s).tz('Asia/Kolkata');
+      const limit = moment(e).tz('Asia/Kolkata');
+      while (current.isSameOrBefore(limit, 'day')) {
+        const ds = current.format('YYYY-MM-DD');
         if (!onDutyMap[r.employeeNo]) onDutyMap[r.employeeNo] = {};
         onDutyMap[r.employeeNo][ds] = {
           description: r.description,
           type: r.type || r.session
         };
+        current.add(1, 'day');
       }
     });
 
@@ -1306,16 +1324,22 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
         } else {
           const att = attendanceMap[user.employeeNo]?.[dateStr];
           if (att) {
-            const checkInMoment = moment(att.firstCheckIn).tz('Asia/Kolkata');
-            if (checkInMoment.hour() >= 12) {
-              status   = 'ML/P';
+            if (att.usedCompOff) {
+              status = 'COMP-OFF';
+              checkIn = '';
+              checkOut = '';
             } else {
-              status   = 'P';
+              const checkInMoment = moment(att.firstCheckIn).tz('Asia/Kolkata');
+              if (checkInMoment.hour() >= 12) {
+                status   = 'ML/P';
+              } else {
+                status   = 'P';
+              }
+              checkIn  = checkInMoment.format('h:mm A');
+              checkOut = att.lastCheckOut
+                ? moment(att.lastCheckOut).tz('Asia/Kolkata').format('h:mm A')
+                : '';
             }
-            checkIn  = checkInMoment.format('h:mm A');
-            checkOut = att.lastCheckOut
-              ? moment(att.lastCheckOut).tz('Asia/Kolkata').format('h:mm A')
-              : '';
           } else {
             status = 'A';
           }
@@ -1358,7 +1382,8 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
       'OD/P': 'FFD700',
       'P/OD': 'FFD700',
       'OD/A': 'FFD700',
-      'A/OD': 'FFD700'
+      'A/OD': 'FFD700',
+      'COMP-OFF': 'FFE4B5'
     };
 
     dateChunks.forEach((chunkDates, chunkIdx) => {
@@ -1669,7 +1694,8 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
             'OD/P': '#FFD700',
             'P/OD': '#FFD700',
             'OD/A': '#FFD700',
-            'A/OD': '#FFD700'
+            'A/OD': '#FFD700',
+            'COMP-OFF': '#FFE4B5'
           };
 
           currentChunk.forEach(ds => {
