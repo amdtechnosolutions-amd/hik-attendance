@@ -1506,7 +1506,7 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
       const descRow1 = ws.addRow(['STATUS DESCRIPTIONS:']);
       descRow1.getCell(1).font = { bold: true, size: 10 };
       
-      const descRow2 = ws.addRow(['P: Present | A: Absent | L: Leave | HD: Half Day | OD: On Duty | MTL: Maternity Leave | WH: Weekend Holiday | H: Holiday']);
+      const descRow2 = ws.addRow(['P: Present | A: Absent | L: Leave | HD: Half Day | OD: On Duty | MTL: Maternity Leave | WH: Weekend Holiday | H: Holiday | COMP-OFF: Comp Off']);
       descRow2.getCell(1).font = { size: 9 };
       
       const descRow3 = ws.addRow(['ML/P: Morning Leave / Present | P/AL: Present / Afternoon Leave | ML/OD: Morning Leave / Afternoon On Duty']);
@@ -1619,7 +1619,7 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
         footerY += 15;
         
         doc.fontSize(8).font('Helvetica')
-          .text("P: Present | A: Absent | L: Leave | HD: Half Day | OD: On Duty | MTL: Maternity Leave | WH: Weekend Holiday | H: Holiday", margin + 10, footerY);
+          .text("P: Present | A: Absent | L: Leave | HD: Half Day | OD: On Duty | MTL: Maternity Leave | WH: Weekend Holiday | H: Holiday | COMP-OFF: Comp Off", margin + 10, footerY);
         footerY += 12;
 
         doc.text("ML/P: Morning Leave / Present | P/AL: Present / Afternoon Leave | ML/OD: Morning Leave / Afternoon On Duty", margin + 10, footerY);
