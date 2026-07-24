@@ -856,8 +856,23 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
             }
           } else {
             if (att.usedCompOff) {
-              status = 'COMP-OFF';
-              totalLeave++;
+              const checkInMoment = moment(att.firstCheckIn).tz('Asia/Kolkata');
+              const checkInStr = checkInMoment.format('HH:mm:ss');
+              const isVirtualCompOff = (checkInStr === '05:30:00' || checkInStr === '00:00:00');
+              if (isVirtualCompOff) {
+                status = 'CMP';
+                totalLeave++;
+              } else {
+                const checkInHour = checkInMoment.hour();
+                if (checkInHour >= 12) {
+                  status = 'CMP/P';
+                } else {
+                  status = 'P/CMP';
+                }
+                totalHalfPresent++;
+                totalPresent += 0.5;
+                totalLeave += 0.5;
+              }
             } else {
               const checkInMoment = moment(att.firstCheckIn).tz('Asia/Kolkata');
               if (checkInMoment.hour() >= 12) {
@@ -959,11 +974,11 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
           const cell = excelRow.getCell(colIndex + 3);
           if (dayData.status === "OD") {
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'CCFFCC' } }; // Light green
-          } else if (dayData.status === "ML/P" || dayData.status === "P/AL" || dayData.status === "OD/P" || dayData.status === "P/OD" || dayData.status === "OD/A" || dayData.status === "A/OD") {
+          } else if (dayData.status === "ML/P" || dayData.status === "P/AL" || dayData.status === "OD/P" || dayData.status === "P/OD" || dayData.status === "OD/A" || dayData.status === "A/OD" || dayData.status === "P/CMP" || dayData.status === "CMP/P") {
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD700' } }; // Gold
           } else if (dayData.status === "A") {
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFCCCC' } }; // Light Red/Pink
-          } else if (dayData.status === "COMP-OFF") {
+          } else if (dayData.status === "CMP") {
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE4B5' } }; // Light Orange
           }
         }
@@ -994,8 +1009,10 @@ export async function getConsolidatedMonthlyAttendanceReport(req, res) {
         "P/OD": "#FFD700",
         "OD/A": "#FFD700",
         "A/OD": "#FFD700",
+        "P/CMP": "#FFD700",
+        "CMP/P": "#FFD700",
         "A": "#FFCCCC",
-        "COMP-OFF": "#FFE4B5"
+        "CMP": "#FFE4B5"
       };
 
       // HEADER + LOGO
@@ -1325,9 +1342,25 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
           const att = attendanceMap[user.employeeNo]?.[dateStr];
           if (att) {
             if (att.usedCompOff) {
-              status = 'COMP-OFF';
-              checkIn = '';
-              checkOut = '';
+              const checkInMoment = moment(att.firstCheckIn).tz('Asia/Kolkata');
+              const checkInStr = checkInMoment.format('HH:mm:ss');
+              const isVirtualCompOff = (checkInStr === '05:30:00' || checkInStr === '00:00:00');
+              if (isVirtualCompOff) {
+                status = 'CMP';
+                checkIn = '';
+                checkOut = '';
+              } else {
+                const checkInHour = checkInMoment.hour();
+                if (checkInHour >= 12) {
+                  status = 'CMP/P';
+                  checkIn = 'CMP';
+                  checkOut = att.lastCheckOut ? moment(att.lastCheckOut).tz('Asia/Kolkata').format('h:mm A') : '';
+                } else {
+                  status = 'P/CMP';
+                  checkIn = checkInMoment.format('h:mm A');
+                  checkOut = 'CMP';
+                }
+              }
             } else {
               const checkInMoment = moment(att.firstCheckIn).tz('Asia/Kolkata');
               if (checkInMoment.hour() >= 12) {
@@ -1383,7 +1416,9 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
       'P/OD': 'FFD700',
       'OD/A': 'FFD700',
       'A/OD': 'FFD700',
-      'COMP-OFF': 'FFE4B5'
+      'P/CMP': 'FFD700',
+      'CMP/P': 'FFD700',
+      'CMP': 'FFE4B5'
     };
 
     dateChunks.forEach((chunkDates, chunkIdx) => {
@@ -1453,7 +1488,7 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
           const c   = ws.getCell(rowNum, 3 + i);
           const day = user.dailyData.find(d => d.date === ds);
 
-          if (day && (day.status === 'P' || day.status === 'OD/P' || day.status === 'P/OD' || day.status === 'OD/A' || day.status === 'A/OD' || day.status === 'ML/P' || day.status === 'P/AL')) {
+          if (day && (day.status === 'P' || day.status === 'OD/P' || day.status === 'P/OD' || day.status === 'OD/A' || day.status === 'A/OD' || day.status === 'ML/P' || day.status === 'P/AL' || day.status === 'P/CMP' || day.status === 'CMP/P')) {
             // Single cell: two lines — In then Out (bold)
             let inLine = 'In: --';
             let outLine = 'Out: --';
@@ -1478,6 +1513,12 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
             } else if (day.status === 'P/AL') {
               inLine = day.checkIn ? `In: ${day.checkIn}` : 'In: --';
               outLine = day.checkOut ? `AL/Out: ${day.checkOut}` : 'AL/Out: --';
+            } else if (day.status === 'P/CMP') {
+              inLine = day.checkIn ? `In: ${day.checkIn}` : 'In: --';
+              outLine = 'Out: CMP';
+            } else if (day.status === 'CMP/P') {
+              inLine = 'In: CMP';
+              outLine = day.checkOut ? `Out: ${day.checkOut}` : 'Out: --';
             }
             c.value     = `${inLine}\n${outLine}`;
             c.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
@@ -1506,10 +1547,10 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
       const descRow1 = ws.addRow(['STATUS DESCRIPTIONS:']);
       descRow1.getCell(1).font = { bold: true, size: 10 };
       
-      const descRow2 = ws.addRow(['P: Present | A: Absent | L: Leave | HD: Half Day | OD: On Duty | MTL: Maternity Leave | WH: Weekend Holiday | H: Holiday | COMP-OFF: Comp Off']);
+      const descRow2 = ws.addRow(['P: Present | A: Absent | L: Leave | HD: Half Day | OD: On Duty | MTL: Maternity Leave | WH: Weekend Holiday | H: Holiday | CMP: Comp Off']);
       descRow2.getCell(1).font = { size: 9 };
       
-      const descRow3 = ws.addRow(['ML/P: Morning Leave / Present | P/AL: Present / Afternoon Leave | ML/OD: Morning Leave / Afternoon On Duty']);
+      const descRow3 = ws.addRow(['ML/P: Morning Leave / Present | P/AL: Present / Afternoon Leave | ML/OD: Morning Leave / Afternoon On Duty | P/CMP: Present / Comp Off | CMP/P: Comp Off / Present']);
       descRow3.getCell(1).font = { size: 9 };
 
       const descRow4 = ws.addRow(['OD/P: Morning On Duty / Afternoon Present | P/OD: Morning Present / Afternoon On Duty | OD/AL: Morning On Duty / Afternoon Leave']);
@@ -1619,10 +1660,10 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
         footerY += 15;
         
         doc.fontSize(8).font('Helvetica')
-          .text("P: Present | A: Absent | L: Leave | HD: Half Day | OD: On Duty | MTL: Maternity Leave | WH: Weekend Holiday | H: Holiday | COMP-OFF: Comp Off", margin + 10, footerY);
+          .text("P: Present | A: Absent | L: Leave | HD: Half Day | OD: On Duty | MTL: Maternity Leave | WH: Weekend Holiday | H: Holiday | CMP: Comp Off", margin + 10, footerY);
         footerY += 12;
 
-        doc.text("ML/P: Morning Leave / Present | P/AL: Present / Afternoon Leave | ML/OD: Morning Leave / Afternoon On Duty", margin + 10, footerY);
+        doc.text("ML/P: Morning Leave / Present | P/AL: Present / Afternoon Leave | ML/OD: Morning Leave / Afternoon On Duty | P/CMP: Present / Comp Off | CMP/P: Comp Off / Present", margin + 10, footerY);
         footerY += 12;
 
         doc.text("OD/P: Morning On Duty / Afternoon Present | P/OD: Morning Present / Afternoon On Duty | OD/AL: Morning On Duty / Afternoon Leave", margin + 10, footerY);
@@ -1695,7 +1736,9 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
             'P/OD': '#FFD700',
             'OD/A': '#FFD700',
             'A/OD': '#FFD700',
-            'COMP-OFF': '#FFE4B5'
+            'P/CMP': '#FFD700',
+            'CMP/P': '#FFD700',
+            CMP: '#FFE4B5'
           };
 
           currentChunk.forEach(ds => {
@@ -1704,7 +1747,7 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
 
             doc.rect(x, y, colW, cellH).fillAndStroke(color, '#CCCCCC');
 
-            if (day && (day.status === 'P' || day.status === 'OD/P' || day.status === 'P/OD' || day.status === 'OD/A' || day.status === 'A/OD' || day.status === 'ML/P' || day.status === 'P/AL')) {
+            if (day && (day.status === 'P' || day.status === 'OD/P' || day.status === 'P/OD' || day.status === 'OD/A' || day.status === 'A/OD' || day.status === 'ML/P' || day.status === 'P/AL' || day.status === 'P/CMP' || day.status === 'CMP/P')) {
               // Two lines: In / Out
               let inLine = '--';
               let outLine = '--';
@@ -1729,6 +1772,12 @@ export async function getConsolidatedMonthlyReportWithTime(req, res) {
               } else if (day.status === 'P/AL') {
                 inLine = `In : ${day.checkIn || '--'}`;
                 outLine = `AL/Out: ${day.checkOut || '--'}`;
+              } else if (day.status === 'P/CMP') {
+                inLine = `In : ${day.checkIn || '--'}`;
+                outLine = `Out: CMP`;
+              } else if (day.status === 'CMP/P') {
+                inLine = `In : CMP`;
+                outLine = `Out: ${day.checkOut || '--'}`;
               }
               doc.fillColor('black').fontSize(7.5).font('Helvetica-Bold')
                 .text(inLine,  x + 2, y + 3,             { width: colW - 4, lineBreak: false });
